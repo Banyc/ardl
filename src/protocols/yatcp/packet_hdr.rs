@@ -27,7 +27,6 @@ impl PacketHeaderBuilder {
     }
 }
 
-
 #[derive(Debug)]
 pub enum Error {
     Decoding { field: &'static str },
@@ -46,10 +45,7 @@ impl PacketHeader {
             .read_u32::<BigEndian>()
             .map_err(|_e| Error::Decoding { field: "nack" })?;
 
-        let this = PacketHeader {
-            wnd,
-            nack,
-        };
+        let this = PacketHeader { wnd, nack };
         this.check_rep();
         Ok(this)
     }
