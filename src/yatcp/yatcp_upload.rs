@@ -4,8 +4,11 @@ use std::{
 };
 
 use crate::{
-    protocols::stream_frag_hdr::{
-        StreamFragCommand, StreamFragHeader, StreamFragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN,
+    protocols::{
+        stream_frag_hdr::{
+            StreamFragCommand, StreamFragHeader, StreamFragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN,
+        },
+        stream_packet_hdr::{StreamPacketHeaderBuilder, PACKET_HDR_LEN},
     },
     utils::{self, BufAny, BufRdr, BufWtr},
 };
@@ -65,17 +68,16 @@ impl YatcpUpload {
                 assert!(!rdr.is_empty());
             }
             if let BufAny::Writer(wtr) = self.to_send_queue.front().unwrap() {
-                // assert!(wtr.data_len() + PUSH_HDR_LEN <= MTU && PUSH_HDR_LEN <= wtr.front_len());
                 assert!(
                     // the existing data should not bigger than the max body length
-                    wtr.data_len() + PUSH_HDR_LEN <= MTU
+                    wtr.data_len() + PACKET_HDR_LEN + PUSH_HDR_LEN <= MTU
                         // and the trailing buffer should be enough for new data
                         && MTU <= wtr.data_len() + wtr.back_len()
                 );
             }
         }
-        assert!(PUSH_HDR_LEN < MTU);
-        assert!(ACK_HDR_LEN < MTU);
+        assert!(PACKET_HDR_LEN + PUSH_HDR_LEN < MTU);
+        assert!(PACKET_HDR_LEN + ACK_HDR_LEN < MTU);
     }
 
     pub fn to_send(&mut self, buf: utils::BufWtr) {
@@ -83,9 +85,9 @@ impl YatcpUpload {
             return;
         }
         // the existing data should not bigger than the max body length
-        if buf.data_len() + PUSH_HDR_LEN <= MTU
+        if buf.data_len() + PACKET_HDR_LEN + PUSH_HDR_LEN <= MTU
             // and the trailing buffer should be enough for new data
-            && MTU <= PUSH_HDR_LEN + buf.data_len() + buf.back_len()
+            && MTU <= PACKET_HDR_LEN + PUSH_HDR_LEN + buf.data_len() + buf.back_len()
         {
             self.to_send_queue.push_back(BufAny::Writer(buf));
         } else {
@@ -95,12 +97,30 @@ impl YatcpUpload {
         self.check_rep();
     }
 
-    pub fn flush_mtu(&mut self) -> Option<utils::BufWtr> {
+    pub fn flush_packet(&mut self) -> Option<utils::BufWtr> {
+        match self.flush_frags() {
+            Some(mut wtr) => {
+                // packet header
+                let hdr = StreamPacketHeaderBuilder {
+                    wnd: self.receiving_queue_free_len as u16,
+                    nack: self.next_seq_to_receive,
+                }
+                .build()
+                .unwrap();
+                wtr.prepend(&hdr.to_bytes()).unwrap();
+                Some(wtr)
+            }
+            None => None,
+        }
+    }
+
+    #[inline]
+    fn flush_frags(&mut self) -> Option<utils::BufWtr> {
         if self.to_ack_queue.is_empty() && self.to_send_queue.is_empty() {
             return None;
         }
 
-        let mut wtr = BufWtr::new(MTU, 0);
+        let mut wtr = BufWtr::new(MTU, PACKET_HDR_LEN);
 
         // piggyback ack
         loop {
@@ -113,9 +133,7 @@ impl YatcpUpload {
                 None => break,
             };
             let hdr = StreamFragHeaderBuilder {
-                wnd: self.receiving_queue_free_len as u16,
                 seq: ack,
-                nack: self.next_seq_to_receive,
                 cmd: StreamFragCommand::Ack,
             }
             .build()
@@ -125,14 +143,14 @@ impl YatcpUpload {
 
         // write push from sending
         for (_seq, frag) in self.sending_queue.iter() {
-            if !(wtr.data_len() + PUSH_HDR_LEN <= MTU) {
+            if !(wtr.data_len() + PUSH_HDR_LEN < MTU - PACKET_HDR_LEN) {
                 self.check_rep();
                 return Some(wtr);
             }
             if !frag.is_timeout(&self.re_tx_timeout) {
                 continue;
             }
-            if !(frag.body.data().len() + PUSH_HDR_LEN <= MTU) {
+            if !(frag.body.data().len() + PUSH_HDR_LEN <= MTU - PACKET_HDR_LEN) {
                 continue;
             }
             let hdr = self.build_push_header(frag.seq, frag.body.data().len() as u32);
@@ -140,7 +158,7 @@ impl YatcpUpload {
             wtr.append(frag.body.data()).unwrap();
         }
 
-        if !(wtr.data_len() + PUSH_HDR_LEN <= MTU) {
+        if !(wtr.data_len() + PUSH_HDR_LEN < MTU - PACKET_HDR_LEN) {
             self.check_rep();
             return Some(wtr);
         }
@@ -157,7 +175,8 @@ impl YatcpUpload {
         {
             // get as many bytes from to_send_queue
             // call those bytes "frag"
-            let frag_body_limit = MTU - PUSH_HDR_LEN - wtr.data_len();
+            let frag_body_limit = MTU - PACKET_HDR_LEN - PUSH_HDR_LEN - wtr.data_len();
+            assert!(frag_body_limit != 0);
             let mut frag_body = BufWtr::new(frag_body_limit, 0);
             while !self.to_send_queue.is_empty() {
                 match self.to_send_queue.pop_front().unwrap() {
@@ -208,9 +227,7 @@ impl YatcpUpload {
 
     fn build_push_header(&self, seq: u32, len: u32) -> StreamFragHeader {
         let hdr = StreamFragHeaderBuilder {
-            wnd: self.receiving_queue_free_len as u16,
             seq,
-            nack: self.next_seq_to_receive,
             cmd: StreamFragCommand::Push { len },
         }
         .build()
@@ -249,7 +266,8 @@ mod tests {
     use std::time;
 
     use crate::{
-        protocols::stream_frag_hdr::PUSH_HDR_LEN, utils::BufWtr,
+        protocols::{stream_frag_hdr::PUSH_HDR_LEN, stream_packet_hdr::PACKET_HDR_LEN},
+        utils::BufWtr,
         yatcp::yatcp_upload::YatcpUploadBuilder,
     };
 
@@ -264,7 +282,7 @@ mod tests {
         .build();
         let buf = BufWtr::new(MTU / 2, 0);
         upload.to_send(buf);
-        let output = upload.flush_mtu();
+        let output = upload.flush_packet();
         assert!(output.is_none());
     }
 
@@ -279,15 +297,15 @@ mod tests {
         let origin = vec![0, 1, 2];
         buf.append(&origin).unwrap();
         upload.to_send(buf);
-        let output = upload.flush_mtu();
+        let output = upload.flush_packet();
         match output {
             Some(x) => {
-                assert_eq!(x.data_len(), PUSH_HDR_LEN + origin.len());
-                assert_eq!(x.data()[PUSH_HDR_LEN..], origin);
+                assert_eq!(x.data_len(), PACKET_HDR_LEN + PUSH_HDR_LEN + origin.len());
+                assert_eq!(x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN..], origin);
             }
             None => panic!(),
         }
-        assert!(upload.flush_mtu().is_none());
+        assert!(upload.flush_packet().is_none());
     }
 
     #[test]
@@ -305,19 +323,26 @@ mod tests {
         let origin2 = vec![3, 4];
         buf.append(&origin2).unwrap();
         upload.to_send(buf);
-        let output = upload.flush_mtu();
+        let output = upload.flush_packet();
         match output {
             Some(x) => {
-                assert_eq!(x.data_len(), PUSH_HDR_LEN + origin1.len() + origin2.len());
                 assert_eq!(
-                    x.data()[PUSH_HDR_LEN..PUSH_HDR_LEN + origin1.len()],
+                    x.data_len(),
+                    PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len() + origin2.len()
+                );
+                assert_eq!(
+                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN
+                        ..PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len()],
                     origin1
                 );
-                assert_eq!(x.data()[PUSH_HDR_LEN + origin1.len()..], origin2);
+                assert_eq!(
+                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len()..],
+                    origin2
+                );
             }
             None => panic!(),
         }
-        assert!(upload.flush_mtu().is_none());
+        assert!(upload.flush_packet().is_none());
     }
 
     #[test]
@@ -335,38 +360,42 @@ mod tests {
         let origin2 = vec![3; MTU];
         buf.append(&origin2).unwrap();
         upload.to_send(buf);
-        let output = upload.flush_mtu();
+        let output = upload.flush_packet();
         match output {
             Some(x) => {
                 assert_eq!(x.data_len(), MTU);
                 assert_eq!(
-                    x.data()[PUSH_HDR_LEN..PUSH_HDR_LEN + origin1.len()],
+                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN
+                        ..PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len()],
                     origin1
                 );
                 assert_eq!(
-                    x.data()[PUSH_HDR_LEN + origin1.len()..],
-                    origin2[..MTU - PUSH_HDR_LEN - origin1.len()]
+                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len()..],
+                    origin2[..MTU - PACKET_HDR_LEN - PUSH_HDR_LEN - origin1.len()]
                 );
             }
             None => panic!(),
         }
-        let output = upload.flush_mtu();
+        let output = upload.flush_packet();
         assert!(output.is_none());
 
         upload.set_remote_rwnd(10);
 
-        let output = upload.flush_mtu();
+        let output = upload.flush_packet();
         match output {
             Some(x) => {
-                assert_eq!(x.data_len(), PUSH_HDR_LEN + PUSH_HDR_LEN + origin1.len());
                 assert_eq!(
-                    x.data()[PUSH_HDR_LEN..],
-                    origin2[MTU - PUSH_HDR_LEN - origin1.len()..]
+                    x.data_len(),
+                    PACKET_HDR_LEN + PUSH_HDR_LEN + PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len()
+                );
+                assert_eq!(
+                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN..],
+                    origin2[MTU - PACKET_HDR_LEN - PUSH_HDR_LEN - origin1.len()..]
                 );
             }
             None => panic!(),
         }
-        assert!(upload.flush_mtu().is_none());
+        assert!(upload.flush_packet().is_none());
     }
 
     #[test]
@@ -384,39 +413,50 @@ mod tests {
         let origin2 = vec![0, 1, 2];
         buf.append(&origin2).unwrap();
         upload.to_send(buf);
-        let output = upload.flush_mtu();
-        // output: hdr mtu-hdr
-        // origin:     1[0..mtu-hdr]
+        let output = upload.flush_packet();
+        // output: _hdr hdr mtu-_hdr-hdr
+        // origin:          1[0..mtu-_hdr-hdr]
         match output {
             Some(x) => {
                 assert_eq!(x.data_len(), MTU);
-                assert_eq!(x.data()[PUSH_HDR_LEN..], origin1[..MTU - PUSH_HDR_LEN],);
+                assert_eq!(
+                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN..],
+                    origin1[..MTU - PACKET_HDR_LEN - PUSH_HDR_LEN],
+                );
             }
             None => panic!(),
         }
-        let output = upload.flush_mtu();
+        let output = upload.flush_packet();
         assert!(output.is_none());
 
         upload.set_remote_rwnd(10);
 
-        let output = upload.flush_mtu();
-        // output: hdr hdr             3
-        // origin:     1[mtu-hdr..mtu] 2[0..3]
+        let output = upload.flush_packet();
+        // output: _hdr hdr _hdr+hdr             3
+        // origin:          1[mtu-_hdr-hdr..mtu] 2[0..3]
         match output {
             Some(x) => {
-                assert_eq!(x.data_len(), PUSH_HDR_LEN + PUSH_HDR_LEN + origin2.len());
                 assert_eq!(
-                    x.data()[PUSH_HDR_LEN..PUSH_HDR_LEN + PUSH_HDR_LEN],
-                    origin1[MTU - PUSH_HDR_LEN..]
+                    x.data_len(),
+                    PACKET_HDR_LEN + PUSH_HDR_LEN + PACKET_HDR_LEN + PUSH_HDR_LEN + origin2.len()
                 );
                 assert_eq!(
-                    x.data()
-                        [PUSH_HDR_LEN + PUSH_HDR_LEN..PUSH_HDR_LEN + PUSH_HDR_LEN + origin2.len()],
+                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN
+                        ..PACKET_HDR_LEN + PUSH_HDR_LEN + PACKET_HDR_LEN + PUSH_HDR_LEN],
+                    origin1[MTU - PACKET_HDR_LEN - PUSH_HDR_LEN..]
+                );
+                assert_eq!(
+                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN + PACKET_HDR_LEN + PUSH_HDR_LEN
+                        ..PACKET_HDR_LEN
+                            + PUSH_HDR_LEN
+                            + PACKET_HDR_LEN
+                            + PUSH_HDR_LEN
+                            + origin2.len()],
                     origin2
                 );
             }
             None => panic!(),
         }
-        assert!(upload.flush_mtu().is_none());
+        assert!(upload.flush_packet().is_none());
     }
 }

@@ -3,49 +3,23 @@ use std::io;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-use crate::utils;
+pub const PUSH_HDR_LEN: usize = 9;
+pub const ACK_HDR_LEN: usize = 5;
 
-pub const PUSH_HDR_LEN: usize = 15;
-pub const ACK_HDR_LEN: usize = 11;
-
-/// # Packet Format
-///
-/// ```text
-/// 0       2   3   4   5   6       8 (BYTE)
-/// +-------+---+---+---+---+-------+
-/// |  wnd  |
-/// +-------+---+---+---+---+-------+
-/// |     seq       |     nack      |
-/// +---+-----------+---------------+
-/// |cmd|
-/// +---+-----------+
-/// |     len       |
-/// +---------------+---------------+
-/// |                               |
-/// |        DATA (optional)        |
-/// |                               |
-/// +-------------------------------+
-/// ```
 pub struct StreamFragHeader {
-    wnd: u16,
     seq: u32,
-    nack: u32,
     cmd: StreamFragCommand,
 }
 
 pub struct StreamFragHeaderBuilder {
-    pub wnd: u16,
     pub seq: u32,
-    pub nack: u32,
     pub cmd: StreamFragCommand,
 }
 
 impl StreamFragHeaderBuilder {
     pub fn build(self) -> Result<StreamFragHeader, Error> {
         let this = StreamFragHeader {
-            wnd: self.wnd,
             seq: self.seq,
-            nack: self.nack,
             cmd: self.cmd,
         };
         this.check_rep();
@@ -76,15 +50,9 @@ impl StreamFragHeader {
     fn check_rep(&self) {}
 
     pub fn from_bytes(rdr: &mut io::Cursor<&[u8]>) -> Result<Self, Error> {
-        let wnd = rdr
-            .read_u16::<BigEndian>()
-            .map_err(|_e| Error::Decoding { field: "wnd" })?;
         let seq = rdr
             .read_u32::<BigEndian>()
             .map_err(|_e| Error::Decoding { field: "seq" })?;
-        let nack = rdr
-            .read_u32::<BigEndian>()
-            .map_err(|_e| Error::Decoding { field: "nack" })?;
         let cmd = rdr
             .read_u8()
             .map_err(|_e| Error::Decoding { field: "cmd" })?;
@@ -99,27 +67,14 @@ impl StreamFragHeader {
             CommandType::Ack => StreamFragCommand::Ack,
         };
 
-        let this = StreamFragHeader {
-            wnd,
-            seq,
-            nack,
-            cmd,
-        };
+        let this = StreamFragHeader { seq, cmd };
         this.check_rep();
         Ok(this)
     }
 
-    pub fn prepend_to(&self, buf: &mut utils::BufWtr) -> Result<(), Error> {
-        let hdr = self.to_bytes();
-        buf.prepend(&hdr).map_err(|_e| Error::NotEnoughSpace)?;
-        Ok(())
-    }
-
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut hdr = Vec::new();
-        hdr.write_u16::<BigEndian>(self.wnd).unwrap();
         hdr.write_u32::<BigEndian>(self.seq).unwrap();
-        hdr.write_u32::<BigEndian>(self.nack).unwrap();
         let cmd = match self.cmd {
             StreamFragCommand::Push { len: _ } => CommandType::Push.into(),
             StreamFragCommand::Ack => CommandType::Ack.into(),
@@ -168,18 +123,16 @@ mod tests {
     #[test]
     fn test_1() {
         let hdr = StreamFragHeaderBuilder {
-            wnd: 234,
-            cmd: StreamFragCommand::Push { len: 567 },
             seq: 345,
-            nack: 456,
+            cmd: StreamFragCommand::Push { len: 567 },
         }
         .build()
         .unwrap();
         let mut buf = BufWtr::new(1024, 512);
-        hdr.prepend_to(&mut buf).unwrap();
+        buf.prepend(&hdr.to_bytes()).unwrap();
         let mut rdr = Cursor::new(buf.data());
         let hdr2 = StreamFragHeader::from_bytes(&mut rdr).unwrap();
-        assert_eq!(hdr.wnd, hdr2.wnd);
+        assert_eq!(hdr.seq, hdr2.seq);
         match hdr.cmd {
             StreamFragCommand::Push { len } => match hdr2.cmd {
                 StreamFragCommand::Push { len: len2 } => {
