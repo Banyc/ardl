@@ -13,7 +13,6 @@ use crate::{
 const MTU: usize = 512;
 
 pub struct YatcpUpload {
-    stream_id: u16,
     to_send_queue: LinkedList<utils::BufAny>,
     sending_queue: BTreeMap<u32, SendingFrag>,
     to_ack_queue: LinkedList<u32>,
@@ -25,7 +24,6 @@ pub struct YatcpUpload {
 }
 
 pub struct YatcpUploadBuilder {
-    pub stream_id: u16,
     pub receiving_queue_len: usize,
     pub re_tx_timeout: time::Duration,
 }
@@ -33,7 +31,6 @@ pub struct YatcpUploadBuilder {
 impl YatcpUploadBuilder {
     pub fn build(self) -> YatcpUpload {
         let this = YatcpUpload {
-            stream_id: self.stream_id,
             to_send_queue: LinkedList::new(),
             sending_queue: BTreeMap::new(),
             to_ack_queue: LinkedList::new(),
@@ -116,7 +113,6 @@ impl YatcpUpload {
                 None => break,
             };
             let hdr = StreamFragHeaderBuilder {
-                stream_id: self.stream_id,
                 wnd: self.receiving_queue_free_len as u16,
                 seq: ack,
                 nack: self.next_seq_to_receive,
@@ -212,7 +208,6 @@ impl YatcpUpload {
 
     fn build_push_header(&self, seq: u32, len: u32) -> StreamFragHeader {
         let hdr = StreamFragHeaderBuilder {
-            stream_id: self.stream_id,
             wnd: self.receiving_queue_free_len as u16,
             seq,
             nack: self.next_seq_to_receive,
@@ -263,7 +258,6 @@ mod tests {
     #[test]
     fn test_empty() {
         let mut upload = YatcpUploadBuilder {
-            stream_id: 1,
             receiving_queue_len: 0,
             re_tx_timeout: time::Duration::from_secs(99),
         }
@@ -277,7 +271,6 @@ mod tests {
     #[test]
     fn test_few_1() {
         let mut upload = YatcpUploadBuilder {
-            stream_id: 1,
             receiving_queue_len: 0,
             re_tx_timeout: time::Duration::from_secs(99),
         }
@@ -300,7 +293,6 @@ mod tests {
     #[test]
     fn test_few_2() {
         let mut upload = YatcpUploadBuilder {
-            stream_id: 1,
             receiving_queue_len: 0,
             re_tx_timeout: time::Duration::from_secs(99),
         }
@@ -331,7 +323,6 @@ mod tests {
     #[test]
     fn test_few_many() {
         let mut upload = YatcpUploadBuilder {
-            stream_id: 1,
             receiving_queue_len: 0,
             re_tx_timeout: time::Duration::from_secs(99),
         }
@@ -381,7 +372,6 @@ mod tests {
     #[test]
     fn test_many_few() {
         let mut upload = YatcpUploadBuilder {
-            stream_id: 1,
             receiving_queue_len: 0,
             re_tx_timeout: time::Duration::from_secs(99),
         }

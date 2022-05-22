@@ -5,15 +5,15 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use crate::utils;
 
-pub const PUSH_HDR_LEN: usize = 17;
-pub const ACK_HDR_LEN: usize = 13;
+pub const PUSH_HDR_LEN: usize = 15;
+pub const ACK_HDR_LEN: usize = 11;
 
 /// # Packet Format
 ///
 /// ```text
 /// 0       2   3   4   5   6       8 (BYTE)
 /// +-------+---+---+---+---+-------+
-/// |stream |  wnd  |
+/// |  wnd  |
 /// +-------+---+---+---+---+-------+
 /// |     seq       |     nack      |
 /// +---+-----------+---------------+
@@ -27,7 +27,6 @@ pub const ACK_HDR_LEN: usize = 13;
 /// +-------------------------------+
 /// ```
 pub struct StreamFragHeader {
-    stream_id: u16,
     wnd: u16,
     seq: u32,
     nack: u32,
@@ -35,7 +34,6 @@ pub struct StreamFragHeader {
 }
 
 pub struct StreamFragHeaderBuilder {
-    pub stream_id: u16,
     pub wnd: u16,
     pub seq: u32,
     pub nack: u32,
@@ -45,7 +43,6 @@ pub struct StreamFragHeaderBuilder {
 impl StreamFragHeaderBuilder {
     pub fn build(self) -> Result<StreamFragHeader, Error> {
         let this = StreamFragHeader {
-            stream_id: self.stream_id,
             wnd: self.wnd,
             seq: self.seq,
             nack: self.nack,
@@ -79,9 +76,6 @@ impl StreamFragHeader {
     fn check_rep(&self) {}
 
     pub fn from_bytes(rdr: &mut io::Cursor<&[u8]>) -> Result<Self, Error> {
-        let stream_id = rdr
-            .read_u16::<BigEndian>()
-            .map_err(|_e| Error::Decoding { field: "stream_id" })?;
         let wnd = rdr
             .read_u16::<BigEndian>()
             .map_err(|_e| Error::Decoding { field: "wnd" })?;
@@ -106,7 +100,6 @@ impl StreamFragHeader {
         };
 
         let this = StreamFragHeader {
-            stream_id,
             wnd,
             seq,
             nack,
@@ -124,7 +117,6 @@ impl StreamFragHeader {
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut hdr = Vec::new();
-        hdr.write_u16::<BigEndian>(self.stream_id).unwrap();
         hdr.write_u16::<BigEndian>(self.wnd).unwrap();
         hdr.write_u32::<BigEndian>(self.seq).unwrap();
         hdr.write_u32::<BigEndian>(self.nack).unwrap();
@@ -151,10 +143,6 @@ impl StreamFragHeader {
 
 impl PartialOrd for StreamFragHeader {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match self.stream_id.partial_cmp(&other.stream_id) {
-            Some(core::cmp::Ordering::Equal) => {}
-            ord => return ord,
-        }
         match self.seq.partial_cmp(&other.seq) {
             Some(core::cmp::Ordering::Equal) => {}
             ord => return ord,
@@ -165,7 +153,7 @@ impl PartialOrd for StreamFragHeader {
 
 impl PartialEq for StreamFragHeader {
     fn eq(&self, other: &Self) -> bool {
-        self.stream_id == other.stream_id && self.seq == other.seq
+        self.seq == other.seq
     }
 }
 
@@ -180,7 +168,6 @@ mod tests {
     #[test]
     fn test_1() {
         let hdr = StreamFragHeaderBuilder {
-            stream_id: 123,
             wnd: 234,
             cmd: StreamFragCommand::Push { len: 567 },
             seq: 345,
@@ -192,7 +179,6 @@ mod tests {
         hdr.prepend_to(&mut buf).unwrap();
         let mut rdr = Cursor::new(buf.data());
         let hdr2 = StreamFragHeader::from_bytes(&mut rdr).unwrap();
-        assert_eq!(hdr.stream_id, hdr2.stream_id);
         assert_eq!(hdr.wnd, hdr2.wnd);
         match hdr.cmd {
             StreamFragCommand::Push { len } => match hdr2.cmd {
