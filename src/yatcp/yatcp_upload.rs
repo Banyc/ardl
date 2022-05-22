@@ -4,11 +4,11 @@ use std::{
 };
 
 use crate::{
-    protocols::{
-        stream_frag_hdr::{
-            StreamFragCommand, StreamFragHeader, StreamFragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN,
+    protocols::yatcp::{
+        frag_hdr::{
+            FragCommand, FragHeader, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN,
         },
-        stream_packet_hdr::{StreamPacketHeaderBuilder, PACKET_HDR_LEN},
+        packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
     utils::{self, BufAny, BufRdr, BufWtr},
 };
@@ -101,7 +101,7 @@ impl YatcpUpload {
         match self.flush_frags() {
             Some(mut wtr) => {
                 // packet header
-                let hdr = StreamPacketHeaderBuilder {
+                let hdr = PacketHeaderBuilder {
                     wnd: self.receiving_queue_free_len as u16,
                     nack: self.next_seq_to_receive,
                 }
@@ -132,9 +132,9 @@ impl YatcpUpload {
                 Some(ack) => ack,
                 None => break,
             };
-            let hdr = StreamFragHeaderBuilder {
+            let hdr = FragHeaderBuilder {
                 seq: ack,
-                cmd: StreamFragCommand::Ack,
+                cmd: FragCommand::Ack,
             }
             .build()
             .unwrap();
@@ -225,10 +225,10 @@ impl YatcpUpload {
         return Some(wtr);
     }
 
-    fn build_push_header(&self, seq: u32, len: u32) -> StreamFragHeader {
-        let hdr = StreamFragHeaderBuilder {
+    fn build_push_header(&self, seq: u32, len: u32) -> FragHeader {
+        let hdr = FragHeaderBuilder {
             seq,
-            cmd: StreamFragCommand::Push { len },
+            cmd: FragCommand::Push { len },
         }
         .build()
         .unwrap();
@@ -266,7 +266,7 @@ mod tests {
     use std::time;
 
     use crate::{
-        protocols::{stream_frag_hdr::PUSH_HDR_LEN, stream_packet_hdr::PACKET_HDR_LEN},
+        protocols::yatcp::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
         utils::BufWtr,
         yatcp::yatcp_upload::YatcpUploadBuilder,
     };

@@ -6,19 +6,19 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 pub const PUSH_HDR_LEN: usize = 9;
 pub const ACK_HDR_LEN: usize = 5;
 
-pub struct StreamFragHeader {
+pub struct FragHeader {
     seq: u32,
-    cmd: StreamFragCommand,
+    cmd: FragCommand,
 }
 
-pub struct StreamFragHeaderBuilder {
+pub struct FragHeaderBuilder {
     pub seq: u32,
-    pub cmd: StreamFragCommand,
+    pub cmd: FragCommand,
 }
 
-impl StreamFragHeaderBuilder {
-    pub fn build(self) -> Result<StreamFragHeader, Error> {
-        let this = StreamFragHeader {
+impl FragHeaderBuilder {
+    pub fn build(self) -> Result<FragHeader, Error> {
+        let this = FragHeader {
             seq: self.seq,
             cmd: self.cmd,
         };
@@ -27,7 +27,7 @@ impl StreamFragHeaderBuilder {
     }
 }
 
-pub enum StreamFragCommand {
+pub enum FragCommand {
     Push { len: u32 },
     Ack,
 }
@@ -45,7 +45,7 @@ pub enum Error {
     NotEnoughSpace,
 }
 
-impl StreamFragHeader {
+impl FragHeader {
     #[inline]
     fn check_rep(&self) {}
 
@@ -62,12 +62,12 @@ impl StreamFragHeader {
                 let len = rdr
                     .read_u32::<BigEndian>()
                     .map_err(|_e| Error::Decoding { field: "len" })?;
-                StreamFragCommand::Push { len }
+                FragCommand::Push { len }
             }
-            CommandType::Ack => StreamFragCommand::Ack,
+            CommandType::Ack => FragCommand::Ack,
         };
 
-        let this = StreamFragHeader { seq, cmd };
+        let this = FragHeader { seq, cmd };
         this.check_rep();
         Ok(this)
     }
@@ -76,27 +76,27 @@ impl StreamFragHeader {
         let mut hdr = Vec::new();
         hdr.write_u32::<BigEndian>(self.seq).unwrap();
         let cmd = match self.cmd {
-            StreamFragCommand::Push { len: _ } => CommandType::Push.into(),
-            StreamFragCommand::Ack => CommandType::Ack.into(),
+            FragCommand::Push { len: _ } => CommandType::Push.into(),
+            FragCommand::Ack => CommandType::Ack.into(),
         };
         hdr.write_u8(cmd).unwrap();
         match self.cmd {
-            StreamFragCommand::Push { len } => {
+            FragCommand::Push { len } => {
                 hdr.write_u32::<BigEndian>(len).unwrap();
             }
-            StreamFragCommand::Ack => (),
+            FragCommand::Ack => (),
         }
         hdr
     }
 
     /// Get a reference to the stream frag header's cmd.
     #[must_use]
-    pub fn cmd(&self) -> &StreamFragCommand {
+    pub fn cmd(&self) -> &FragCommand {
         &self.cmd
     }
 }
 
-impl PartialOrd for StreamFragHeader {
+impl PartialOrd for FragHeader {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         match self.seq.partial_cmp(&other.seq) {
             Some(core::cmp::Ordering::Equal) => {}
@@ -106,7 +106,7 @@ impl PartialOrd for StreamFragHeader {
     }
 }
 
-impl PartialEq for StreamFragHeader {
+impl PartialEq for FragHeader {
     fn eq(&self, other: &Self) -> bool {
         self.seq == other.seq
     }
@@ -122,20 +122,20 @@ mod tests {
 
     #[test]
     fn test_1() {
-        let hdr = StreamFragHeaderBuilder {
+        let hdr = FragHeaderBuilder {
             seq: 345,
-            cmd: StreamFragCommand::Push { len: 567 },
+            cmd: FragCommand::Push { len: 567 },
         }
         .build()
         .unwrap();
         let mut buf = BufWtr::new(1024, 512);
         buf.prepend(&hdr.to_bytes()).unwrap();
         let mut rdr = Cursor::new(buf.data());
-        let hdr2 = StreamFragHeader::from_bytes(&mut rdr).unwrap();
+        let hdr2 = FragHeader::from_bytes(&mut rdr).unwrap();
         assert_eq!(hdr.seq, hdr2.seq);
         match hdr.cmd {
-            StreamFragCommand::Push { len } => match hdr2.cmd {
-                StreamFragCommand::Push { len: len2 } => {
+            FragCommand::Push { len } => match hdr2.cmd {
+                FragCommand::Push { len: len2 } => {
                     assert_eq!(len, len2);
                 }
                 _ => panic!(),
