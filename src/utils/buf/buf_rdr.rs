@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use super::{BufWtr, BufFrag, BufFragBuilder};
+use super::{BufFrag, BufFragBuilder, BufWtr};
 
 pub struct BufRdr {
     buf: Rc<BufWtr>,

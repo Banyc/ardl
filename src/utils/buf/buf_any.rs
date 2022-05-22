@@ -1,4 +1,4 @@
-use super::{BufWtr, BufRdr};
+use super::{BufRdr, BufWtr};
 
 pub enum BufAny {
     Reader(BufRdr),
