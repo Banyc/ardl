@@ -7,5 +7,4 @@ edition = "2021"
 
 [dependencies]
 byteorder = "1.4.3"
-chrono = "0.4.19"
 num_enum = "0.5.7"
