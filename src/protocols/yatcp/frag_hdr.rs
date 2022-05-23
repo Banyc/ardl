@@ -116,7 +116,7 @@ impl PartialEq for FragHeader {
 mod tests {
     use std::io::Cursor;
 
-    use crate::utils::BufWtr;
+    use crate::utils::{BufWtr, BufWtrTrait};
 
     use super::*;
 

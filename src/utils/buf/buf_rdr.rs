@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use super::{BufFrag, BufFragBuilder, BufWtr};
+use super::{BufFrag, BufFragBuilder, BufWtr, BufWtrTrait};
 
 pub struct BufRdr {
     buf: Rc<BufWtr>,
@@ -43,7 +43,7 @@ impl BufRdr {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::BufWtr;
+    use crate::utils::{BufWtr, BufWtrTrait};
 
     use super::BufRdr;
 

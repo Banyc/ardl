@@ -1,6 +1,6 @@
 use std::{ops::Range, rc::Rc};
 
-use super::BufWtr;
+use super::{BufWtr, BufWtrTrait};
 
 pub struct BufFrag {
     buf: Rc<BufWtr>,
@@ -40,7 +40,7 @@ impl BufFrag {
 mod tests {
     use std::rc::Rc;
 
-    use crate::utils::BufWtr;
+    use crate::utils::{BufWtr, BufWtrTrait};
 
     use super::BufFragBuilder;
 

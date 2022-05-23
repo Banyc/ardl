@@ -1,42 +1,35 @@
 use super::{buf_wtr_trait::Error, BufWtrTrait};
 
 #[derive(Debug)]
-pub struct BufWtr {
-    buf: Vec<u8>,
+pub struct SubbufWtr<'a> {
+    buf: &'a mut [u8],
     start: usize,
     end: usize,
 }
 
-impl BufWtr {
+impl<'a> SubbufWtr<'a> {
     #[inline]
     pub fn check_rep(&self) {
         assert!(self.start <= self.end);
         assert!(self.end <= self.buf.len());
     }
-    pub fn from_vec(buf: Vec<u8>, start: usize, end: usize) -> Self {
+    pub fn from_vec(buf: &'a mut [u8], start: usize, end: usize) -> Self {
         let this = Self { buf, start, end };
         this.check_rep();
         this
     }
-    pub fn new(len: usize, start: usize) -> Self {
+    pub fn new(buf: &'a mut [u8], start: usize) -> Self {
         let this = Self {
-            buf: vec![0; len],
+            buf,
             start,
             end: start,
         };
         this.check_rep();
         this
     }
-    #[inline]
-    pub fn assign(&mut self, other: BufWtr) {
-        self.buf = other.buf;
-        self.start = other.start;
-        self.end = other.end;
-        self.check_rep();
-    }
 }
 
-impl BufWtrTrait for BufWtr {
+impl<'a> BufWtrTrait for SubbufWtr<'a> {
     #[inline]
     fn data_len(&self) -> usize {
         self.end - self.start
@@ -143,7 +136,8 @@ mod tests {
 
     #[test]
     fn copy() {
-        let mut buf = BufWtr::new(1024, 512);
+        let mut buf = vec![0; 1024];
+        let mut buf = SubbufWtr::new(&mut buf, 512);
         let tail = vec![1, 2, 3];
         let head = vec![4, 5, 6];
         buf.append(&tail).unwrap();

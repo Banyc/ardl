@@ -8,10 +8,8 @@ use crate::{
         frag_hdr::{FragCommand, FragHeader, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN},
         packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
-    utils::{self, BufPasta, BufRdr, BufWtr},
+    utils::{self, BufPasta, BufRdr, BufWtrTrait, SubbufWtr},
 };
-
-const MTU: usize = 512;
 
 pub struct YatcpUpload {
     to_send_queue: LinkedList<utils::BufRdr>,
@@ -64,8 +62,8 @@ impl YatcpUpload {
         if !self.to_send_queue.is_empty() {
             assert!(!self.to_send_queue.front().unwrap().is_empty());
         }
-        assert!(PACKET_HDR_LEN + PUSH_HDR_LEN < MTU);
-        assert!(PACKET_HDR_LEN + ACK_HDR_LEN < MTU);
+        // assert!(PACKET_HDR_LEN + PUSH_HDR_LEN < MTU);
+        // assert!(PACKET_HDR_LEN + ACK_HDR_LEN < MTU);
     }
 
     pub fn to_send(&mut self, buf: utils::BufWtr) {
@@ -77,36 +75,42 @@ impl YatcpUpload {
         self.check_rep();
     }
 
-    pub fn flush_packet(&mut self) -> Option<utils::BufWtr> {
-        match self.flush_frags() {
-            Some(mut wtr) => {
-                // packet header
-                let hdr = PacketHeaderBuilder {
-                    wnd: self.receiving_queue_free_len as u16,
-                    nack: self.next_seq_to_receive,
-                }
-                .build()
-                .unwrap();
-                wtr.prepend(&hdr.to_bytes()).unwrap();
-                Some(wtr)
+    pub fn flush_packet(&mut self, wtr: &mut impl BufWtrTrait) -> bool {
+        assert!(PACKET_HDR_LEN + ACK_HDR_LEN <= wtr.back_len());
+        assert!(PACKET_HDR_LEN + PUSH_HDR_LEN < wtr.back_len());
+
+        let mut subwtr = SubbufWtr::new(wtr.back_free_space(), PACKET_HDR_LEN);
+
+        let is_written = self.append_frags_to(&mut subwtr);
+
+        if is_written {
+            // packet header
+            let hdr = PacketHeaderBuilder {
+                wnd: self.receiving_queue_free_len as u16,
+                nack: self.next_seq_to_receive,
             }
-            None => None,
+            .build()
+            .unwrap();
+            subwtr.prepend(&hdr.to_bytes()).unwrap();
+
+            let subwtr_len = subwtr.data_len();
+
+            wtr.grow_back(subwtr_len).unwrap();
         }
+        is_written
     }
 
     #[inline]
-    fn flush_frags(&mut self) -> Option<utils::BufWtr> {
+    fn append_frags_to(&mut self, wtr: &mut impl BufWtrTrait) -> bool {
         if self.to_ack_queue.is_empty() && self.to_send_queue.is_empty() {
-            return None;
+            return false;
         }
-
-        let mut wtr = BufWtr::new(MTU, PACKET_HDR_LEN);
 
         // piggyback ack
         loop {
-            if !(wtr.data_len() + ACK_HDR_LEN <= MTU) {
+            if !(ACK_HDR_LEN <= wtr.back_len()) {
                 self.check_rep();
-                return Some(wtr);
+                return true;
             }
             let ack = match self.to_ack_queue.pop_front() {
                 Some(ack) => ack,
@@ -123,31 +127,31 @@ impl YatcpUpload {
 
         // write push from sending
         for (_seq, frag) in self.sending_queue.iter() {
-            if !(wtr.data_len() + PUSH_HDR_LEN < MTU - PACKET_HDR_LEN) {
+            if !(PUSH_HDR_LEN < wtr.back_len()) {
                 self.check_rep();
-                return Some(wtr);
+                return true;
             }
             if !frag.is_timeout(&self.re_tx_timeout) {
                 continue;
             }
-            if !(frag.body.len() + PUSH_HDR_LEN <= MTU - PACKET_HDR_LEN) {
+            if !(frag.body.len() + PUSH_HDR_LEN <= wtr.back_len()) {
                 continue;
             }
             let hdr = self.build_push_header(frag.seq, frag.body.len() as u32);
             wtr.append(&hdr.to_bytes()).unwrap();
-            frag.body.append_to(&mut wtr).unwrap();
+            frag.body.append_to(wtr).unwrap();
         }
 
-        if !(wtr.data_len() + PUSH_HDR_LEN < MTU - PACKET_HDR_LEN) {
+        if !(PUSH_HDR_LEN < wtr.back_len()) {
             self.check_rep();
-            return Some(wtr);
+            return true;
         }
         if !(self.sending_queue.len() < u16::max(self.remote_rwnd, 1) as usize) {
             self.check_rep();
             if wtr.is_empty() {
-                return None;
+                return false;
             } else {
-                return Some(wtr);
+                return true;
             }
         }
 
@@ -155,7 +159,7 @@ impl YatcpUpload {
         {
             // get as many bytes from to_send_queue
             // call those bytes "frag"
-            let frag_body_limit = MTU - PACKET_HDR_LEN - PUSH_HDR_LEN - wtr.data_len();
+            let frag_body_limit = wtr.back_len() - PUSH_HDR_LEN;
             assert!(frag_body_limit != 0);
             let mut frag_body = BufPasta::new();
             while !self.to_send_queue.is_empty() {
@@ -182,14 +186,14 @@ impl YatcpUpload {
             // write the frag to output buffer
             let hdr = self.build_push_header(frag.seq, frag.body.len() as u32);
             wtr.append(&hdr.to_bytes()).unwrap();
-            frag.body.append_to(&mut wtr).unwrap();
+            frag.body.append_to(wtr).unwrap();
             // register the frag to sending_queue
             self.sending_queue.insert(frag.seq, frag);
         }
 
         self.check_rep();
         assert!(!wtr.is_empty());
-        return Some(wtr);
+        return true;
     }
 
     fn build_push_header(&self, seq: u32, len: u32) -> FragHeader {
@@ -234,11 +238,11 @@ mod tests {
 
     use crate::{
         protocols::yatcp::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
-        utils::BufWtr,
+        utils::{BufWtr, BufWtrTrait},
         yatcp::yatcp_upload::YatcpUploadBuilder,
     };
 
-    use super::MTU;
+    const MTU: usize = 512;
 
     #[test]
     fn test_empty() {
@@ -249,8 +253,9 @@ mod tests {
         .build();
         let buf = BufWtr::new(MTU / 2, 0);
         upload.to_send(buf);
-        let output = upload.flush_packet();
-        assert!(output.is_none());
+        let mut packet = BufWtr::new(MTU, 0);
+        let is_written = upload.flush_packet(&mut packet);
+        assert!(!is_written);
     }
 
     #[test]
@@ -264,15 +269,20 @@ mod tests {
         let origin = vec![0, 1, 2];
         buf.append(&origin).unwrap();
         upload.to_send(buf);
-        let output = upload.flush_packet();
-        match output {
-            Some(x) => {
-                assert_eq!(x.data_len(), PACKET_HDR_LEN + PUSH_HDR_LEN + origin.len());
-                assert_eq!(x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN..], origin);
+        let mut packet = BufWtr::new(MTU, 0);
+        let is_written = upload.flush_packet(&mut packet);
+        match is_written {
+            true => {
+                assert_eq!(
+                    packet.data_len(),
+                    PACKET_HDR_LEN + PUSH_HDR_LEN + origin.len()
+                );
+                assert_eq!(packet.data()[PACKET_HDR_LEN + PUSH_HDR_LEN..], origin);
             }
-            None => panic!(),
+            false => panic!(),
         }
-        assert!(upload.flush_packet().is_none());
+        packet.reset_data(0);
+        assert!(!upload.flush_packet(&mut packet));
     }
 
     #[test]
@@ -290,26 +300,28 @@ mod tests {
         let origin2 = vec![3, 4];
         buf.append(&origin2).unwrap();
         upload.to_send(buf);
-        let output = upload.flush_packet();
-        match output {
-            Some(x) => {
+        let mut packet = BufWtr::new(MTU, 0);
+        let is_written = upload.flush_packet(&mut packet);
+        match is_written {
+            true => {
                 assert_eq!(
-                    x.data_len(),
+                    packet.data_len(),
                     PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len() + origin2.len()
                 );
                 assert_eq!(
-                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN
+                    packet.data()[PACKET_HDR_LEN + PUSH_HDR_LEN
                         ..PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len()],
                     origin1
                 );
                 assert_eq!(
-                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len()..],
+                    packet.data()[PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len()..],
                     origin2
                 );
             }
-            None => panic!(),
+            false => panic!(),
         }
-        assert!(upload.flush_packet().is_none());
+        packet.reset_data(0);
+        assert!(!upload.flush_packet(&mut packet));
     }
 
     #[test]
@@ -327,42 +339,46 @@ mod tests {
         let origin2 = vec![3; MTU];
         buf.append(&origin2).unwrap();
         upload.to_send(buf);
-        let output = upload.flush_packet();
-        match output {
-            Some(x) => {
-                assert_eq!(x.data_len(), MTU);
+        let mut packet = BufWtr::new(MTU, 0);
+        let is_written = upload.flush_packet(&mut packet);
+        match is_written {
+            true => {
+                assert_eq!(packet.data_len(), MTU);
                 assert_eq!(
-                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN
+                    packet.data()[PACKET_HDR_LEN + PUSH_HDR_LEN
                         ..PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len()],
                     origin1
                 );
                 assert_eq!(
-                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len()..],
+                    packet.data()[PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len()..],
                     origin2[..MTU - PACKET_HDR_LEN - PUSH_HDR_LEN - origin1.len()]
                 );
             }
-            None => panic!(),
+            false => panic!(),
         }
-        let output = upload.flush_packet();
-        assert!(output.is_none());
+        packet.reset_data(0);
+        let is_written = upload.flush_packet(&mut packet);
+        assert!(!is_written);
 
         upload.set_remote_rwnd(10);
 
-        let output = upload.flush_packet();
-        match output {
-            Some(x) => {
+        packet.reset_data(0);
+        let is_written = upload.flush_packet(&mut packet);
+        match is_written {
+            true => {
                 assert_eq!(
-                    x.data_len(),
+                    packet.data_len(),
                     PACKET_HDR_LEN + PUSH_HDR_LEN + PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len()
                 );
                 assert_eq!(
-                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN..],
+                    packet.data()[PACKET_HDR_LEN + PUSH_HDR_LEN..],
                     origin2[MTU - PACKET_HDR_LEN - PUSH_HDR_LEN - origin1.len()..]
                 );
             }
-            None => panic!(),
+            false => panic!(),
         }
-        assert!(upload.flush_packet().is_none());
+        packet.reset_data(0);
+        assert!(!upload.flush_packet(&mut packet));
     }
 
     #[test]
@@ -380,40 +396,43 @@ mod tests {
         let origin2 = vec![0, 1, 2];
         buf.append(&origin2).unwrap();
         upload.to_send(buf);
-        let output = upload.flush_packet();
-        // output: _hdr hdr mtu-_hdr-hdr
+        let mut packet = BufWtr::new(MTU, 0);
+        let is_written = upload.flush_packet(&mut packet);
+        // packet: _hdr hdr mtu-_hdr-hdr
         // origin:          1[0..mtu-_hdr-hdr]
-        match output {
-            Some(x) => {
-                assert_eq!(x.data_len(), MTU);
+        match is_written {
+            true => {
+                assert_eq!(packet.data_len(), MTU);
                 assert_eq!(
-                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN..],
+                    packet.data()[PACKET_HDR_LEN + PUSH_HDR_LEN..],
                     origin1[..MTU - PACKET_HDR_LEN - PUSH_HDR_LEN],
                 );
             }
-            None => panic!(),
+            false => panic!(),
         }
-        let output = upload.flush_packet();
-        assert!(output.is_none());
+        packet.reset_data(0);
+        let is_written = upload.flush_packet(&mut packet);
+        assert!(!is_written);
 
         upload.set_remote_rwnd(10);
 
-        let output = upload.flush_packet();
-        // output: _hdr hdr _hdr+hdr             3
+        packet.reset_data(0);
+        let is_written = upload.flush_packet(&mut packet);
+        // packet: _hdr hdr _hdr+hdr             3
         // origin:          1[mtu-_hdr-hdr..mtu] 2[0..3]
-        match output {
-            Some(x) => {
+        match is_written {
+            true => {
                 assert_eq!(
-                    x.data_len(),
+                    packet.data_len(),
                     PACKET_HDR_LEN + PUSH_HDR_LEN + PACKET_HDR_LEN + PUSH_HDR_LEN + origin2.len()
                 );
                 assert_eq!(
-                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN
+                    packet.data()[PACKET_HDR_LEN + PUSH_HDR_LEN
                         ..PACKET_HDR_LEN + PUSH_HDR_LEN + PACKET_HDR_LEN + PUSH_HDR_LEN],
                     origin1[MTU - PACKET_HDR_LEN - PUSH_HDR_LEN..]
                 );
                 assert_eq!(
-                    x.data()[PACKET_HDR_LEN + PUSH_HDR_LEN + PACKET_HDR_LEN + PUSH_HDR_LEN
+                    packet.data()[PACKET_HDR_LEN + PUSH_HDR_LEN + PACKET_HDR_LEN + PUSH_HDR_LEN
                         ..PACKET_HDR_LEN
                             + PUSH_HDR_LEN
                             + PACKET_HDR_LEN
@@ -422,8 +441,9 @@ mod tests {
                     origin2
                 );
             }
-            None => panic!(),
+            false => panic!(),
         }
-        assert!(upload.flush_packet().is_none());
+        packet.reset_data(0);
+        assert!(!upload.flush_packet(&mut packet));
     }
 }

@@ -8,3 +8,7 @@ mod buf_any;
 pub use buf_any::*;
 mod buf_pasta;
 pub use buf_pasta::*;
+mod subbuf_wtr;
+pub use subbuf_wtr::*;
+mod buf_wtr_trait;
+pub use buf_wtr_trait::*;

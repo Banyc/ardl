@@ -2,7 +2,7 @@ use std::io;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
-use crate::utils;
+use crate::utils::{self, BufWtrTrait};
 
 pub const PACKET_HDR_LEN: usize = 6;
 
@@ -68,7 +68,7 @@ impl PacketHeader {
 mod tests {
     use std::io::Cursor;
 
-    use crate::utils::BufWtr;
+    use crate::utils::{BufWtr, BufWtrTrait};
 
     use super::*;
 

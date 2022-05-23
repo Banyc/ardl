@@ -1,4 +1,4 @@
-use super::{BufFrag, BufWtr};
+use super::{BufFrag, BufWtr, BufWtrTrait};
 
 pub struct BufPasta {
     frags: Vec<BufFrag>,
@@ -39,7 +39,7 @@ impl BufPasta {
         self.check_rep();
     }
 
-    pub fn append_to(&self, wtr: &mut BufWtr) -> Result<(), Error> {
+    pub fn append_to(&self, wtr: &mut impl BufWtrTrait) -> Result<(), Error> {
         if wtr.back_len() < self.len {
             return Err(Error::NotEnoughSpace);
         }
@@ -62,7 +62,7 @@ impl BufPasta {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{BufRdr, BufWtr};
+    use crate::utils::{BufRdr, BufWtr, BufWtrTrait};
 
     use super::BufPasta;
 
