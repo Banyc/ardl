@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     protocols::yatcp::{
-        frag_hdr::{FragCommand, FragHeader, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN},
+        frag_hdr::{FragCommand, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN},
         packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
     utils::{self, BufPasta, BufRdr, BufWtr, SubBufWtr},
@@ -15,7 +15,7 @@ pub struct YatcpUpload {
     to_send_queue: LinkedList<utils::BufRdr>,
     sending_queue: BTreeMap<u32, SendingFrag>,
     to_ack_queue: LinkedList<u32>,
-    receiving_queue_free_len: usize,
+    local_receiving_queue_free_len: usize,
     next_seq_to_receive: u32,
     next_seq_to_send: u32,
     re_tx_timeout: time::Duration,
@@ -33,7 +33,7 @@ impl YatcpUploadBuilder {
             to_send_queue: LinkedList::new(),
             sending_queue: BTreeMap::new(),
             to_ack_queue: LinkedList::new(),
-            receiving_queue_free_len: self.receiving_queue_len,
+            local_receiving_queue_free_len: self.receiving_queue_len,
             next_seq_to_receive: 0,
             re_tx_timeout: self.re_tx_timeout,
             next_seq_to_send: 0,
@@ -85,7 +85,7 @@ impl YatcpUpload {
         if is_written {
             // packet header
             let hdr = PacketHeaderBuilder {
-                wnd: self.receiving_queue_free_len as u16,
+                wnd: self.local_receiving_queue_free_len as u16,
                 nack: self.next_seq_to_receive,
             }
             .build()
@@ -127,7 +127,7 @@ impl YatcpUpload {
             .unwrap();
             wtr.append(&hdr.to_bytes()).unwrap();
         }
-        
+
         // write push from sending
         for (_seq, frag) in self.sending_queue.iter() {
             if !(PUSH_HDR_LEN < wtr.back_len()) {
@@ -141,11 +141,18 @@ impl YatcpUpload {
             if !(frag.body.len() + PUSH_HDR_LEN <= wtr.back_len()) {
                 continue;
             }
-            let hdr = self.build_push_header(frag.seq, frag.body.len() as u32);
+            let hdr = FragHeaderBuilder {
+                seq: frag.seq,
+                cmd: FragCommand::Push {
+                    len: frag.body.len() as u32,
+                },
+            }
+            .build()
+            .unwrap();
             wtr.append(&hdr.to_bytes()).unwrap();
             frag.body.append_to(wtr).unwrap();
         }
-        
+
         if !(PUSH_HDR_LEN < wtr.back_len()) {
             self.check_rep();
             assert!(!wtr.is_empty());
@@ -191,7 +198,14 @@ impl YatcpUpload {
                 last_seen: time::Instant::now(),
             };
             // write the frag to output buffer
-            let hdr = self.build_push_header(frag.seq, frag.body.len() as u32);
+            let hdr = FragHeaderBuilder {
+                seq: frag.seq,
+                cmd: FragCommand::Push {
+                    len: frag.body.len() as u32,
+                },
+            }
+            .build()
+            .unwrap();
             wtr.append(&hdr.to_bytes()).unwrap();
             frag.body.append_to(wtr).unwrap();
             // register the frag to sending_queue
@@ -203,40 +217,33 @@ impl YatcpUpload {
         return;
     }
 
-    fn build_push_header(&self, seq: u32, len: u32) -> FragHeader {
-        let hdr = FragHeaderBuilder {
-            seq,
-            cmd: FragCommand::Push { len },
-        }
-        .build()
-        .unwrap();
-        hdr
-    }
-
-    /// Set the yatcp upload's remote rwnd.
     #[inline]
-    pub fn set_remote_rwnd(&mut self, remote_rwnd: u16) {
-        self.remote_rwnd = remote_rwnd;
-        self.check_rep();
-    }
-
-    /// Set the yatcp upload's next seq to receive.
-    #[inline]
-    pub fn set_next_seq_to_receive(&mut self, next_seq_to_receive: u32) {
-        self.next_seq_to_receive = next_seq_to_receive;
+    pub fn set_remote_rwnd(&mut self, wnd: u16) {
+        self.remote_rwnd = wnd;
         self.check_rep();
     }
 
     #[inline]
-    pub fn add_to_ack(&mut self, to_ack: u32) {
-        self.to_ack_queue.push_back(to_ack);
+    pub fn set_next_seq_to_receive(&mut self, nack: u32) {
+        self.next_seq_to_receive = nack;
+        self.sending_queue.retain(|&seq, _| !(seq < nack));
         self.check_rep();
     }
-    
-    /// Set the yatcp upload's receiving queue free len.
+
     #[inline]
-    pub fn set_receiving_queue_free_len(&mut self, receiving_queue_free_len: usize) {
-        self.receiving_queue_free_len = receiving_queue_free_len;
+    pub fn add_seq_to_ack(&mut self, seq_to_ack: u32) {
+        self.to_ack_queue.push_back(seq_to_ack);
+        self.check_rep();
+    }
+
+    #[inline]
+    pub fn remove_sending(&mut self, ack: u32) {
+        self.sending_queue.remove(&ack);
+    }
+
+    #[inline]
+    pub fn set_receiving_queue_free_len(&mut self, local_receiving_queue_free_len: usize) {
+        self.local_receiving_queue_free_len = local_receiving_queue_free_len;
     }
 }
 
@@ -246,7 +253,7 @@ mod tests {
 
     use crate::{
         protocols::yatcp::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
-        utils::{OwnedBufWtr, BufWtr},
+        utils::{BufWtr, OwnedBufWtr},
         yatcp::yatcp_upload::YatcpUploadBuilder,
     };
 
