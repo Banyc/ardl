@@ -1,4 +1,4 @@
-use super::{BufFrag, OwnedBufWtr, BufWtr};
+use super::{BufFrag, BufWtr, OwnedBufWtr};
 
 pub struct BufPasta {
     frags: Vec<BufFrag>,
@@ -62,7 +62,7 @@ impl BufPasta {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{BufRdr, OwnedBufWtr, BufWtr};
+    use crate::utils::{BufRdr, BufWtr, OwnedBufWtr};
 
     use super::BufPasta;
 

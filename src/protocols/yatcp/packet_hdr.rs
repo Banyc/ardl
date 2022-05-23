@@ -68,7 +68,7 @@ impl PacketHeader {
     pub fn wnd(&self) -> u16 {
         self.rwnd
     }
-    
+
     #[inline]
     pub fn nack(&self) -> u32 {
         self.nack
@@ -79,7 +79,7 @@ impl PacketHeader {
 mod tests {
     use std::io::Cursor;
 
-    use crate::utils::{OwnedBufWtr, BufWtr};
+    use crate::utils::{BufWtr, OwnedBufWtr};
 
     use super::*;
 

@@ -395,9 +395,9 @@ mod tests {
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         assert!(!is_written);
         assert_eq!(upload.next_seq_to_send, 1);
-        
+
         upload.set_remote_rwnd(10);
-        
+
         packet.reset_data(0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         match is_written {

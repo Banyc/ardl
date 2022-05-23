@@ -97,7 +97,7 @@ impl FragHeader {
     pub fn cmd(&self) -> &FragCommand {
         &self.cmd
     }
-    
+
     #[must_use]
     #[inline]
     pub fn seq(&self) -> u32 {
@@ -125,7 +125,7 @@ impl PartialEq for FragHeader {
 mod tests {
     use std::io::Cursor;
 
-    use crate::utils::{OwnedBufWtr, BufWtr};
+    use crate::utils::{BufWtr, OwnedBufWtr};
 
     use super::*;
 
