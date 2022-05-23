@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, LinkedList},
+    collections::{BTreeMap, VecDeque},
     time,
 };
 
@@ -12,9 +12,9 @@ use crate::{
 };
 
 pub struct YatcpUpload {
-    to_send_queue: LinkedList<utils::BufRdr>,
+    to_send_queue: VecDeque<utils::BufRdr>,
     sending_queue: BTreeMap<u32, SendingFrag>,
-    to_ack_queue: LinkedList<u32>,
+    to_ack_queue: VecDeque<u32>,
     local_receiving_queue_free_len: usize,
     next_seq_to_receive: u32,
     next_seq_to_send: u32,
@@ -30,9 +30,9 @@ pub struct YatcpUploadBuilder {
 impl YatcpUploadBuilder {
     pub fn build(self) -> YatcpUpload {
         let this = YatcpUpload {
-            to_send_queue: LinkedList::new(),
+            to_send_queue: VecDeque::new(),
             sending_queue: BTreeMap::new(),
-            to_ack_queue: LinkedList::new(),
+            to_ack_queue: VecDeque::new(),
             local_receiving_queue_free_len: self.receiving_queue_len,
             next_seq_to_receive: 0,
             re_tx_timeout: self.re_tx_timeout,
