@@ -58,6 +58,7 @@ mod tests {
         }
         .build();
 
+        // push: 1 -> 2
         {
             let buf = vec![0, 1, 2];
             let rdr = BufRdr::from_bytes(buf);
@@ -86,7 +87,7 @@ mod tests {
             let recv2 = download2.recv().unwrap();
             assert_eq!(recv2.data(), vec![0, 1, 2]);
         }
-        // ack
+        // ack: 1 <- 2
         {
             let mut inflight = OwnedBufWtr::new(1024, 0);
             let is_written = upload2.append_packet_to_and_if_written(&mut inflight);
@@ -100,4 +101,77 @@ mod tests {
             upload1.set_states(upload1_changes);
         }
     }
+
+    #[test]
+    fn test_retranmission() {
+        let (mut upload1, mut _download1) = YatcpBuilder {
+            max_local_receiving_queue_len: 2,
+            re_tx_timeout: time::Duration::from_secs(0),
+        }
+        .build();
+        let (mut upload2, mut download2) = YatcpBuilder {
+            max_local_receiving_queue_len: 2,
+            re_tx_timeout: time::Duration::from_secs(0),
+        }
+        .build();
+
+        // push: 1 -> 2
+        {
+            let buf = vec![0, 1, 2];
+            let rdr = BufRdr::from_bytes(buf);
+            upload1.to_send(rdr);
+
+            let mut inflight = OwnedBufWtr::new(1024, 0);
+            let is_written = upload1.append_packet_to_and_if_written(&mut inflight);
+            assert!(is_written);
+
+            assert_eq!(
+                inflight.data(),
+                vec![
+                    0, 2, // rwnd
+                    0, 0, 0, 0, // nack
+                    0, 0, 0, 0, // seq
+                    0, // cmd (Push)
+                    0, 0, 0, 3, // len
+                    0, 1, 2 // data
+                ]
+            );
+
+            let inflight = BufRdr::from_wtr(inflight);
+            let upload2_changes = download2.input(inflight).unwrap();
+            upload2.set_states(upload2_changes);
+
+            let recv2 = download2.recv().unwrap();
+            assert_eq!(recv2.data(), vec![0, 1, 2]);
+        }
+        // ack: 1 <- 2
+        {
+            let mut inflight = OwnedBufWtr::new(1024, 0);
+            let is_written = upload2.append_packet_to_and_if_written(&mut inflight);
+            assert!(is_written);
+
+            //                               rwnd] [     nack] [      seq] [cmd
+            assert_eq!(inflight.data(), vec![0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+            // dropped
+        }
+        // retransmit: 1 -> 2
+        {
+            let mut inflight = OwnedBufWtr::new(1024, 0);
+            let is_written = upload1.append_packet_to_and_if_written(&mut inflight);
+            assert!(is_written);
+
+            assert_eq!(
+                inflight.data(),
+                vec![
+                    0, 2, // rwnd
+                    0, 0, 0, 0, // nack
+                    0, 0, 0, 0, // seq
+                    0, // cmd (Push)
+                    0, 0, 0, 3, // len
+                    0, 1, 2 // data
+                ]
+            );
+        }
+    }   
 }

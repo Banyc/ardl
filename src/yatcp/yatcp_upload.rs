@@ -107,7 +107,10 @@ impl YatcpUpload {
 
     #[inline]
     fn append_frags_to(&mut self, wtr: &mut impl BufWtr) {
-        if self.to_ack_queue.is_empty() && self.to_send_queue.is_empty() {
+        if self.to_ack_queue.is_empty()
+            && self.sending_queue.is_empty()
+            && self.to_send_queue.is_empty()
+        {
             assert!(wtr.is_empty());
             return;
         }
@@ -163,7 +166,6 @@ impl YatcpUpload {
 
         if self.to_send_queue.is_empty() {
             self.check_rep();
-            assert!(!wtr.is_empty());
             return;
         }
         if !(PUSH_HDR_LEN < wtr.back_len()) {
