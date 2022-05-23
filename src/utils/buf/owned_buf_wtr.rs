@@ -13,7 +13,7 @@ impl OwnedBufWtr {
         assert!(self.start <= self.end);
         assert!(self.end <= self.buf.len());
     }
-    pub fn from_vec(buf: Vec<u8>, start: usize, end: usize) -> Self {
+    pub fn from_bytes(buf: Vec<u8>, start: usize, end: usize) -> Self {
         let this = Self { buf, start, end };
         this.check_rep();
         this

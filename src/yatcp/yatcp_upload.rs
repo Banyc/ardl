@@ -16,7 +16,7 @@ pub struct YatcpUpload {
     sending_queue: BTreeMap<u32, SendingFrag>,
     to_ack_queue: VecDeque<u32>,
     local_receiving_queue_free_len: usize,
-    next_seq_to_receive: u32,
+    local_next_seq_to_receive: u32,
     next_seq_to_send: u32,
     re_tx_timeout: time::Duration,
     remote_rwnd: u16,
@@ -34,7 +34,7 @@ impl YatcpUploadBuilder {
             sending_queue: BTreeMap::new(),
             to_ack_queue: VecDeque::new(),
             local_receiving_queue_free_len: self.local_receiving_queue_len,
-            next_seq_to_receive: 0,
+            local_next_seq_to_receive: 0,
             re_tx_timeout: self.re_tx_timeout,
             next_seq_to_send: 0,
             remote_rwnd: 0,
@@ -85,7 +85,7 @@ impl YatcpUpload {
             // packet header
             let hdr = PacketHeaderBuilder {
                 wnd: self.local_receiving_queue_free_len as u16,
-                nack: self.next_seq_to_receive,
+                nack: self.local_next_seq_to_receive,
             }
             .build()
             .unwrap();
@@ -229,21 +229,26 @@ impl YatcpUpload {
     }
 
     #[inline]
-    pub fn set_next_seq_to_receive(&mut self, nack: u32) {
-        self.next_seq_to_receive = nack;
-        self.sending_queue.retain(|&seq, _| !(seq < nack));
+    pub fn set_local_next_seq_to_receive(&mut self, local_next_seq_to_receive: u32) {
+        self.local_next_seq_to_receive = local_next_seq_to_receive;
         self.check_rep();
     }
-
+    
     #[inline]
-    pub fn add_seq_to_ack(&mut self, seq_to_ack: u32) {
-        self.to_ack_queue.push_back(seq_to_ack);
+    pub fn add_seq_to_ack(&mut self, remote_seq_to_ack: u32) {
+        self.to_ack_queue.push_back(remote_seq_to_ack);
         self.check_rep();
     }
-
+    
     #[inline]
-    pub fn remove_sending(&mut self, ack: u32) {
-        self.sending_queue.remove(&ack);
+    pub fn remove_sending(&mut self, acked_local_seq: u32) {
+        self.sending_queue.remove(&acked_local_seq);
+        self.check_rep();
+    }
+    
+    pub fn remove_sending_before(&mut self, remote_nack: u32) {
+        self.sending_queue.retain(|&seq, _| !(seq < remote_nack));
+        self.check_rep();
     }
 
     #[inline]
@@ -272,7 +277,7 @@ mod tests {
         }
         .build();
         let buf = OwnedBufWtr::new(MTU / 2, 0);
-        let rdr = BufRdr::new(buf);
+        let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr);
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -289,7 +294,7 @@ mod tests {
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin = vec![0, 1, 2];
         buf.append(&origin).unwrap();
-        let rdr = BufRdr::new(buf);
+        let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr);
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -317,12 +322,12 @@ mod tests {
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
-        let rdr = BufRdr::new(buf);
+        let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr);
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![3, 4];
         buf.append(&origin2).unwrap();
-        let rdr = BufRdr::new(buf);
+        let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr);
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -358,12 +363,12 @@ mod tests {
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
-        let rdr = BufRdr::new(buf);
+        let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr);
         let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin2 = vec![3; MTU];
         buf.append(&origin2).unwrap();
-        let rdr = BufRdr::new(buf);
+        let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr);
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -417,12 +422,12 @@ mod tests {
         let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin1 = vec![3; MTU];
         buf.append(&origin1).unwrap();
-        let rdr = BufRdr::new(buf);
+        let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr);
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![0, 1, 2];
         buf.append(&origin2).unwrap();
-        let rdr = BufRdr::new(buf);
+        let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr);
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);

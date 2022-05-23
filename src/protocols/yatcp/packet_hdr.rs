@@ -63,6 +63,16 @@ impl PacketHeader {
         assert_eq!(hdr.len(), PACKET_HDR_LEN);
         hdr
     }
+
+    #[inline]
+    pub fn wnd(&self) -> u16 {
+        self.wnd
+    }
+    
+    #[inline]
+    pub fn nack(&self) -> u32 {
+        self.nack
+    }
 }
 
 #[cfg(test)]

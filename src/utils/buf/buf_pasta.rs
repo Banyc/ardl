@@ -76,8 +76,8 @@ mod tests {
         let origin2 = vec![4];
         let mut wtr2 = OwnedBufWtr::new(1024, 512);
         wtr2.append(&origin2).unwrap();
-        let mut rdr1 = BufRdr::new(wtr1);
-        let mut rdr2 = BufRdr::new(wtr2);
+        let mut rdr1 = BufRdr::from_wtr(wtr1);
+        let mut rdr2 = BufRdr::from_wtr(wtr2);
 
         assert_eq!(pasta.len(), 0);
         pasta.append(rdr1.try_slice(2).unwrap());

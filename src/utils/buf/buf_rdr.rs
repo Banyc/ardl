@@ -1,6 +1,9 @@
-use std::{rc::Rc, io::{self, Cursor}};
+use std::{
+    io::{self, Cursor},
+    rc::Rc,
+};
 
-use super::{BufFrag, BufFragBuilder, OwnedBufWtr, BufWtr};
+use super::{BufFrag, BufFragBuilder, BufWtr, OwnedBufWtr};
 
 pub struct BufRdr {
     buf: Rc<OwnedBufWtr>,
@@ -17,11 +20,19 @@ impl BufRdr {
         assert!(self.cursor <= self.buf.data_len());
     }
 
-    pub fn new(buf: OwnedBufWtr) -> Self {
+    pub fn from_wtr(wtr: OwnedBufWtr) -> Self {
         let this = BufRdr {
-            buf: Rc::new(buf),
+            buf: Rc::new(wtr),
             cursor: 0,
         };
+        this.check_rep();
+        this
+    }
+
+    pub fn from_bytes(buf: Vec<u8>) -> Self {
+        let buf_len = buf.len();
+        let wtr = OwnedBufWtr::from_bytes(buf, 0, buf_len);
+        let this = BufRdr::from_wtr(wtr);
         this.check_rep();
         this
     }
@@ -63,7 +74,7 @@ impl BufRdr {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{OwnedBufWtr, BufWtr};
+    use crate::utils::{BufWtr, OwnedBufWtr};
 
     use super::BufRdr;
 
@@ -71,7 +82,7 @@ mod tests {
     fn try_read() {
         let mut buf = OwnedBufWtr::new(1024, 512);
         buf.append(&vec![0, 1, 2, 3, 4, 5]).unwrap();
-        let mut rdr = BufRdr::new(buf);
+        let mut rdr = BufRdr::from_wtr(buf);
         let frag0 = rdr.try_slice(1).unwrap();
         assert_eq!(frag0.data(), vec![0]);
         let frag12 = rdr.try_slice(2).unwrap();
