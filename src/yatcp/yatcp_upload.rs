@@ -62,8 +62,6 @@ impl YatcpUpload {
         if !self.to_send_queue.is_empty() {
             assert!(!self.to_send_queue.front().unwrap().is_empty());
         }
-        // assert!(PACKET_HDR_LEN + PUSH_HDR_LEN < MTU);
-        // assert!(PACKET_HDR_LEN + ACK_HDR_LEN < MTU);
     }
 
     pub fn to_send(&mut self, buf: utils::OwnedBufWtr) {
@@ -75,7 +73,7 @@ impl YatcpUpload {
         self.check_rep();
     }
 
-    pub fn append_packet_to(&mut self, wtr: &mut impl BufWtr) -> bool {
+    pub fn append_packet_to_and_if_written(&mut self, wtr: &mut impl BufWtr) -> bool {
         assert!(PACKET_HDR_LEN + ACK_HDR_LEN <= wtr.back_len());
         assert!(PACKET_HDR_LEN + PUSH_HDR_LEN < wtr.back_len());
 
@@ -261,7 +259,7 @@ mod tests {
         let buf = OwnedBufWtr::new(MTU / 2, 0);
         upload.to_send(buf);
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to(&mut packet);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
         assert!(!is_written);
     }
 
@@ -277,7 +275,7 @@ mod tests {
         buf.append(&origin).unwrap();
         upload.to_send(buf);
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to(&mut packet);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
         match is_written {
             true => {
                 assert_eq!(
@@ -289,7 +287,7 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        assert!(!upload.append_packet_to(&mut packet));
+        assert!(!upload.append_packet_to_and_if_written(&mut packet));
     }
 
     #[test]
@@ -308,7 +306,7 @@ mod tests {
         buf.append(&origin2).unwrap();
         upload.to_send(buf);
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to(&mut packet);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
         match is_written {
             true => {
                 assert_eq!(
@@ -328,7 +326,7 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        assert!(!upload.append_packet_to(&mut packet));
+        assert!(!upload.append_packet_to_and_if_written(&mut packet));
     }
 
     #[test]
@@ -347,7 +345,7 @@ mod tests {
         buf.append(&origin2).unwrap();
         upload.to_send(buf);
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to(&mut packet);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
         match is_written {
             true => {
                 assert_eq!(packet.data_len(), MTU);
@@ -364,13 +362,13 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        let is_written = upload.append_packet_to(&mut packet);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
         assert!(!is_written);
 
         upload.set_remote_rwnd(10);
 
         packet.reset_data(0);
-        let is_written = upload.append_packet_to(&mut packet);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
         match is_written {
             true => {
                 assert_eq!(
@@ -385,7 +383,7 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        assert!(!upload.append_packet_to(&mut packet));
+        assert!(!upload.append_packet_to_and_if_written(&mut packet));
     }
 
     #[test]
@@ -404,7 +402,7 @@ mod tests {
         buf.append(&origin2).unwrap();
         upload.to_send(buf);
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to(&mut packet);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
         // packet: _hdr hdr mtu-_hdr-hdr
         // origin:          1[0..mtu-_hdr-hdr]
         match is_written {
@@ -418,13 +416,13 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        let is_written = upload.append_packet_to(&mut packet);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
         assert!(!is_written);
 
         upload.set_remote_rwnd(10);
 
         packet.reset_data(0);
-        let is_written = upload.append_packet_to(&mut packet);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
         // packet: _hdr hdr _hdr+hdr             3
         // origin:          1[mtu-_hdr-hdr..mtu] 2[0..3]
         match is_written {
@@ -451,6 +449,6 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        assert!(!upload.append_packet_to(&mut packet));
+        assert!(!upload.append_packet_to_and_if_written(&mut packet));
     }
 }
