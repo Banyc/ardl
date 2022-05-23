@@ -230,8 +230,9 @@ impl YatcpUpload {
         self.to_ack_queue.push_back(to_ack);
         self.check_rep();
     }
-
+    
     /// Set the yatcp upload's receiving queue free len.
+    #[inline]
     pub fn set_receiving_queue_free_len(&mut self, receiving_queue_free_len: usize) {
         self.receiving_queue_free_len = receiving_queue_free_len;
     }

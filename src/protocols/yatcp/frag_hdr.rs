@@ -1,7 +1,7 @@
 use std::io;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
+use num_enum::TryFromPrimitive;
 
 pub const PUSH_HDR_LEN: usize = 9;
 pub const ACK_HDR_LEN: usize = 5;
@@ -32,11 +32,11 @@ pub enum FragCommand {
     Ack,
 }
 
-#[derive(IntoPrimitive, Clone, Copy, TryFromPrimitive)]
+#[derive(TryFromPrimitive)]
 #[repr(u8)]
 pub enum CommandType {
-    Push,
-    Ack,
+    Push = 0,
+    Ack = 1,
 }
 
 #[derive(Debug)]
@@ -76,10 +76,10 @@ impl FragHeader {
         let mut hdr = Vec::new();
         hdr.write_u32::<BigEndian>(self.seq).unwrap();
         let cmd = match self.cmd {
-            FragCommand::Push { len: _ } => CommandType::Push.into(),
-            FragCommand::Ack => CommandType::Ack.into(),
+            FragCommand::Push { len: _ } => CommandType::Push,
+            FragCommand::Ack => CommandType::Ack,
         };
-        hdr.write_u8(cmd).unwrap();
+        hdr.write_u8(cmd as u8).unwrap();
         match self.cmd {
             FragCommand::Push { len } => {
                 hdr.write_u32::<BigEndian>(len).unwrap();
