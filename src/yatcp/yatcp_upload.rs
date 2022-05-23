@@ -8,7 +8,7 @@ use crate::{
         frag_hdr::{FragCommand, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN},
         packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
-    utils::{self, BufPasta, BufRdr, BufWtr, SubBufWtr},
+    utils::{self, BufPasta, BufWtr, SubBufWtr},
 };
 
 pub struct YatcpUpload {
@@ -23,7 +23,7 @@ pub struct YatcpUpload {
 }
 
 pub struct YatcpUploadBuilder {
-    pub receiving_queue_len: usize,
+    pub local_receiving_queue_len: usize,
     pub re_tx_timeout: time::Duration,
 }
 
@@ -33,7 +33,7 @@ impl YatcpUploadBuilder {
             to_send_queue: VecDeque::new(),
             sending_queue: BTreeMap::new(),
             to_ack_queue: VecDeque::new(),
-            local_receiving_queue_free_len: self.receiving_queue_len,
+            local_receiving_queue_free_len: self.local_receiving_queue_len,
             next_seq_to_receive: 0,
             re_tx_timeout: self.re_tx_timeout,
             next_seq_to_send: 0,
@@ -64,11 +64,10 @@ impl YatcpUpload {
         }
     }
 
-    pub fn to_send(&mut self, buf: utils::OwnedBufWtr) {
-        if buf.is_empty() {
+    pub fn to_send(&mut self, rdr: utils::BufRdr) {
+        if rdr.is_empty() {
             return;
         }
-        let rdr = BufRdr::new(buf);
         self.to_send_queue.push_back(rdr);
         self.check_rep();
     }
@@ -125,7 +124,9 @@ impl YatcpUpload {
             }
             .build()
             .unwrap();
-            wtr.append(&hdr.to_bytes()).unwrap();
+            let bytes = hdr.to_bytes();
+            assert_eq!(bytes.len(), ACK_HDR_LEN);
+            wtr.append(&bytes).unwrap();
         }
 
         // write push from sending
@@ -149,7 +150,9 @@ impl YatcpUpload {
             }
             .build()
             .unwrap();
-            wtr.append(&hdr.to_bytes()).unwrap();
+            let bytes = hdr.to_bytes();
+            assert_eq!(bytes.len(), PUSH_HDR_LEN);
+            wtr.append(&bytes).unwrap();
             frag.body.append_to(wtr).unwrap();
         }
 
@@ -178,7 +181,7 @@ impl YatcpUpload {
             let mut frag_body = BufPasta::new();
             while !self.to_send_queue.is_empty() {
                 let mut rdr = self.to_send_queue.pop_front().unwrap();
-                let buf = rdr.try_read(frag_body_limit - frag_body.len()).unwrap();
+                let buf = rdr.try_slice(frag_body_limit - frag_body.len()).unwrap();
                 frag_body.append(buf);
                 if !rdr.is_empty() {
                     self.to_send_queue.push_front(rdr);
@@ -206,7 +209,9 @@ impl YatcpUpload {
             }
             .build()
             .unwrap();
-            wtr.append(&hdr.to_bytes()).unwrap();
+            let bytes = hdr.to_bytes();
+            assert_eq!(bytes.len(), PUSH_HDR_LEN);
+            wtr.append(&bytes).unwrap();
             frag.body.append_to(wtr).unwrap();
             // register the frag to sending_queue
             self.sending_queue.insert(frag.seq, frag);
@@ -253,7 +258,7 @@ mod tests {
 
     use crate::{
         protocols::yatcp::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
-        utils::{BufWtr, OwnedBufWtr},
+        utils::{BufWtr, OwnedBufWtr, BufRdr},
         yatcp::yatcp_upload::YatcpUploadBuilder,
     };
 
@@ -262,12 +267,13 @@ mod tests {
     #[test]
     fn test_empty() {
         let mut upload = YatcpUploadBuilder {
-            receiving_queue_len: 0,
+            local_receiving_queue_len: 0,
             re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
         let buf = OwnedBufWtr::new(MTU / 2, 0);
-        upload.to_send(buf);
+        let rdr = BufRdr::new(buf);
+        upload.to_send(rdr);
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         assert!(!is_written);
@@ -276,14 +282,15 @@ mod tests {
     #[test]
     fn test_few_1() {
         let mut upload = YatcpUploadBuilder {
-            receiving_queue_len: 0,
+            local_receiving_queue_len: 0,
             re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin = vec![0, 1, 2];
         buf.append(&origin).unwrap();
-        upload.to_send(buf);
+        let rdr = BufRdr::new(buf);
+        upload.to_send(rdr);
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         match is_written {
@@ -303,18 +310,20 @@ mod tests {
     #[test]
     fn test_few_2() {
         let mut upload = YatcpUploadBuilder {
-            receiving_queue_len: 0,
+            local_receiving_queue_len: 0,
             re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
-        upload.to_send(buf);
+        let rdr = BufRdr::new(buf);
+        upload.to_send(rdr);
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![3, 4];
         buf.append(&origin2).unwrap();
-        upload.to_send(buf);
+        let rdr = BufRdr::new(buf);
+        upload.to_send(rdr);
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         match is_written {
@@ -342,18 +351,20 @@ mod tests {
     #[test]
     fn test_few_many() {
         let mut upload = YatcpUploadBuilder {
-            receiving_queue_len: 0,
+            local_receiving_queue_len: 0,
             re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
-        upload.to_send(buf);
+        let rdr = BufRdr::new(buf);
+        upload.to_send(rdr);
         let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin2 = vec![3; MTU];
         buf.append(&origin2).unwrap();
-        upload.to_send(buf);
+        let rdr = BufRdr::new(buf);
+        upload.to_send(rdr);
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         match is_written {
@@ -399,18 +410,20 @@ mod tests {
     #[test]
     fn test_many_few() {
         let mut upload = YatcpUploadBuilder {
-            receiving_queue_len: 0,
+            local_receiving_queue_len: 0,
             re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
         let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin1 = vec![3; MTU];
         buf.append(&origin1).unwrap();
-        upload.to_send(buf);
+        let rdr = BufRdr::new(buf);
+        upload.to_send(rdr);
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![0, 1, 2];
         buf.append(&origin2).unwrap();
-        upload.to_send(buf);
+        let rdr = BufRdr::new(buf);
+        upload.to_send(rdr);
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         // packet: _hdr hdr mtu-_hdr-hdr

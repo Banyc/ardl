@@ -80,11 +80,11 @@ mod tests {
         let mut rdr2 = BufRdr::new(wtr2);
 
         assert_eq!(pasta.len(), 0);
-        pasta.append(rdr1.try_read(2).unwrap());
+        pasta.append(rdr1.try_slice(2).unwrap());
         assert_eq!(pasta.len(), 2);
-        pasta.append(rdr2.try_read(2).unwrap());
+        pasta.append(rdr2.try_slice(2).unwrap());
         assert_eq!(pasta.len(), 3);
-        pasta.append(rdr1.try_read(2).unwrap());
+        pasta.append(rdr1.try_slice(2).unwrap());
         assert_eq!(pasta.len(), 5);
 
         pasta.append_to(&mut wtr).unwrap();

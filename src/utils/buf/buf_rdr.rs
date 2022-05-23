@@ -1,10 +1,15 @@
-use std::rc::Rc;
+use std::{rc::Rc, io::{self, Cursor}};
 
 use super::{BufFrag, BufFragBuilder, OwnedBufWtr, BufWtr};
 
 pub struct BufRdr {
     buf: Rc<OwnedBufWtr>,
     cursor: usize,
+}
+
+#[derive(Debug)]
+pub enum Error {
+    NotEnoughSpace,
 }
 
 impl BufRdr {
@@ -21,7 +26,16 @@ impl BufRdr {
         this
     }
 
-    pub fn try_read(&mut self, len: usize) -> Option<BufFrag> {
+    pub fn skip(&mut self, len: usize) -> Result<(), Error> {
+        if !(self.cursor + len <= self.buf.data_len()) {
+            return Err(Error::NotEnoughSpace);
+        }
+        self.cursor += len;
+        self.check_rep();
+        Ok(())
+    }
+
+    pub fn try_slice(&mut self, len: usize) -> Option<BufFrag> {
         let end = usize::min(self.cursor + len, self.buf.data_len());
         if end == self.cursor {
             return None;
@@ -34,6 +48,12 @@ impl BufRdr {
         self.cursor = end;
         self.check_rep();
         Some(frag)
+    }
+
+    pub fn get_peek_cursor(&self) -> io::Cursor<&[u8]> {
+        let buf = &self.buf.data()[self.cursor..];
+        let cursor = Cursor::new(buf);
+        cursor
     }
 
     pub fn is_empty(&self) -> bool {
@@ -52,15 +72,15 @@ mod tests {
         let mut buf = OwnedBufWtr::new(1024, 512);
         buf.append(&vec![0, 1, 2, 3, 4, 5]).unwrap();
         let mut rdr = BufRdr::new(buf);
-        let frag0 = rdr.try_read(1).unwrap();
+        let frag0 = rdr.try_slice(1).unwrap();
         assert_eq!(frag0.data(), vec![0]);
-        let frag12 = rdr.try_read(2).unwrap();
+        let frag12 = rdr.try_slice(2).unwrap();
         assert_eq!(frag12.data(), vec![1, 2]);
         assert!(!rdr.is_empty());
-        let frag345 = rdr.try_read(99).unwrap();
+        let frag345 = rdr.try_slice(99).unwrap();
         assert_eq!(frag345.data(), vec![3, 4, 5]);
         assert!(rdr.is_empty());
-        let frag_none = rdr.try_read(1);
+        let frag_none = rdr.try_slice(1);
         assert!(frag_none.is_none());
     }
 }

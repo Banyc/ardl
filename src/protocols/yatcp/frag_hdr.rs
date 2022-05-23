@@ -92,10 +92,16 @@ impl FragHeader {
         hdr
     }
 
-    /// Get a reference to the stream frag header's cmd.
     #[must_use]
+    #[inline]
     pub fn cmd(&self) -> &FragCommand {
         &self.cmd
+    }
+    
+    #[must_use]
+    #[inline]
+    pub fn seq(&self) -> u32 {
+        self.seq
     }
 }
 
