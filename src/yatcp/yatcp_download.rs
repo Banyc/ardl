@@ -8,6 +8,8 @@ use crate::{
     utils::{self, BufFrag},
 };
 
+use super::SetUploadStates;
+
 pub struct YatcpDownload {
     received_queue: VecDeque<BufFrag>,
     receiving_queue: BTreeMap<u32, BufFrag>,
@@ -53,9 +55,9 @@ impl YatcpDownload {
         received
     }
 
-    pub fn input(&mut self, mut rdr: utils::BufRdr) -> Result<UploadStateChanges, Error> {
+    pub fn input(&mut self, mut rdr: utils::BufRdr) -> Result<SetUploadStates, Error> {
         let partial_state_changes = self.handle_packet(&mut rdr)?;
-        let state_changes = UploadStateChanges {
+        let state_changes = SetUploadStates {
             remote_rwnd: partial_state_changes.remote_rwnd,
             remote_nack: partial_state_changes.remote_nack,
             local_next_seq_to_receive: self.local_next_seq_to_receive,
@@ -112,7 +114,8 @@ impl YatcpDownload {
                 FragCommand::Push { len } => {
                     let body = match rdr.try_slice(*len as usize) {
                         Some(x) => x,
-                        None => todo!(),
+                        // no transactions are happening => no need to compensate
+                        None => break,
                     };
                     // if out of rwnd
                     if !(hdr.seq()
@@ -145,15 +148,6 @@ impl YatcpDownload {
             acked_local_seqs,
         }
     }
-}
-
-pub struct UploadStateChanges {
-    pub remote_rwnd: u16,
-    pub remote_nack: u32,
-    pub local_next_seq_to_receive: u32,
-    pub remote_seqs_to_ack: Vec<u32>,
-    pub acked_local_seqs: Vec<u32>,
-    pub local_receiving_queue_free_len: usize,
 }
 
 struct HandleFragsStateChanges {

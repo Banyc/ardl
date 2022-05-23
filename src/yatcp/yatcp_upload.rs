@@ -11,6 +11,8 @@ use crate::{
     utils::{self, BufPasta, BufWtr, SubBufWtr},
 };
 
+use super::SetUploadStates;
+
 pub struct YatcpUpload {
     // modified by `append_frags_to`
     to_send_queue: VecDeque<utils::BufRdr>,
@@ -159,6 +161,11 @@ impl YatcpUpload {
             frag.body.append_to(wtr).unwrap();
         }
 
+        if self.to_send_queue.is_empty() {
+            self.check_rep();
+            assert!(!wtr.is_empty());
+            return;
+        }
         if !(PUSH_HDR_LEN < wtr.back_len()) {
             self.check_rep();
             assert!(!wtr.is_empty());
@@ -248,6 +255,7 @@ impl YatcpUpload {
         self.check_rep();
     }
 
+    #[inline]
     pub fn remove_sending_before(&mut self, remote_nack: u32) {
         self.sending_queue.retain(|&seq, _| !(seq < remote_nack));
         self.check_rep();
@@ -256,6 +264,20 @@ impl YatcpUpload {
     #[inline]
     pub fn set_receiving_queue_free_len(&mut self, local_receiving_queue_free_len: usize) {
         self.local_receiving_queue_free_len = local_receiving_queue_free_len;
+    }
+
+    #[inline]
+    pub fn set_states(&mut self, delta: SetUploadStates) {
+        self.set_remote_rwnd(delta.remote_rwnd);
+        self.set_local_next_seq_to_receive(delta.local_next_seq_to_receive);
+        self.remove_sending_before(delta.remote_nack);
+        self.set_receiving_queue_free_len(delta.local_receiving_queue_free_len);
+        for acked_local_seq in delta.acked_local_seqs {
+            self.remove_sending(acked_local_seq);
+        }
+        for remote_seq_to_ack in delta.remote_seqs_to_ack {
+            self.add_remote_seq_to_ack(remote_seq_to_ack);
+        }
     }
 }
 
