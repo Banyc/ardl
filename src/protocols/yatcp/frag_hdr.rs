@@ -1,7 +1,7 @@
 use std::io;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use num_enum::{TryFromPrimitive, IntoPrimitive};
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 pub const PUSH_HDR_LEN: usize = 9;
 pub const ACK_HDR_LEN: usize = 5;
