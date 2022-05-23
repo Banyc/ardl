@@ -50,7 +50,6 @@ impl YatcpUploadBuilder {
 }
 
 struct SendingFrag {
-    seq: u32,
     body: BufPasta,
     last_seen: time::Instant,
 }
@@ -134,7 +133,7 @@ impl YatcpUpload {
         }
 
         // write push from sending
-        for (_seq, frag) in self.sending_queue.iter() {
+        for (&seq, frag) in self.sending_queue.iter() {
             if !(PUSH_HDR_LEN < wtr.back_len()) {
                 self.check_rep();
                 assert!(!wtr.is_empty());
@@ -147,7 +146,7 @@ impl YatcpUpload {
                 continue;
             }
             let hdr = FragHeaderBuilder {
-                seq: frag.seq,
+                seq,
                 cmd: FragCommand::Push {
                     len: frag.body.len() as u32,
                 },
@@ -200,13 +199,12 @@ impl YatcpUpload {
             let seq = self.next_seq_to_send;
             self.next_seq_to_send += 1;
             let frag = SendingFrag {
-                seq,
                 body: frag_body,
                 last_seen: time::Instant::now(),
             };
             // write the frag to output buffer
             let hdr = FragHeaderBuilder {
-                seq: frag.seq,
+                seq,
                 cmd: FragCommand::Push {
                     len: frag.body.len() as u32,
                 },
@@ -218,7 +216,7 @@ impl YatcpUpload {
             wtr.append(&bytes).unwrap();
             frag.body.append_to(wtr).unwrap();
             // register the frag to sending_queue
-            self.sending_queue.insert(frag.seq, frag);
+            self.sending_queue.insert(seq, frag);
         }
 
         self.check_rep();
