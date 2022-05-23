@@ -84,7 +84,7 @@ impl YatcpUpload {
         if is_written {
             // packet header
             let hdr = PacketHeaderBuilder {
-                wnd: self.local_receiving_queue_free_len as u16,
+                rwnd: self.local_receiving_queue_free_len as u16,
                 nack: self.local_next_seq_to_receive,
             }
             .build()

@@ -7,19 +7,19 @@ use crate::utils::{self, BufWtr};
 pub const PACKET_HDR_LEN: usize = 6;
 
 pub struct PacketHeader {
-    wnd: u16,
+    rwnd: u16,
     nack: u32,
 }
 
 pub struct PacketHeaderBuilder {
-    pub wnd: u16,
+    pub rwnd: u16,
     pub nack: u32,
 }
 
 impl PacketHeaderBuilder {
     pub fn build(self) -> Result<PacketHeader, Error> {
         let this = PacketHeader {
-            wnd: self.wnd,
+            rwnd: self.rwnd,
             nack: self.nack,
         };
         this.check_rep();
@@ -38,14 +38,14 @@ impl PacketHeader {
     fn check_rep(&self) {}
 
     pub fn from_bytes(rdr: &mut io::Cursor<&[u8]>) -> Result<Self, Error> {
-        let wnd = rdr
+        let rwnd = rdr
             .read_u16::<BigEndian>()
-            .map_err(|_e| Error::Decoding { field: "wnd" })?;
+            .map_err(|_e| Error::Decoding { field: "rwnd" })?;
         let nack = rdr
             .read_u32::<BigEndian>()
             .map_err(|_e| Error::Decoding { field: "nack" })?;
 
-        let this = PacketHeader { wnd, nack };
+        let this = PacketHeader { rwnd, nack };
         this.check_rep();
         Ok(this)
     }
@@ -58,7 +58,7 @@ impl PacketHeader {
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut hdr = Vec::new();
-        hdr.write_u16::<BigEndian>(self.wnd).unwrap();
+        hdr.write_u16::<BigEndian>(self.rwnd).unwrap();
         hdr.write_u32::<BigEndian>(self.nack).unwrap();
         assert_eq!(hdr.len(), PACKET_HDR_LEN);
         hdr
@@ -66,7 +66,7 @@ impl PacketHeader {
 
     #[inline]
     pub fn wnd(&self) -> u16 {
-        self.wnd
+        self.rwnd
     }
     
     #[inline]
@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn test_1() {
         let hdr = PacketHeaderBuilder {
-            wnd: 123,
+            rwnd: 123,
             nack: 456,
         }
         .build()
@@ -95,7 +95,7 @@ mod tests {
         buf.prepend(&hdr.to_bytes()).unwrap();
         let mut rdr = Cursor::new(buf.data());
         let hdr2 = PacketHeader::from_bytes(&mut rdr).unwrap();
-        assert_eq!(hdr.wnd, hdr2.wnd);
+        assert_eq!(hdr.rwnd, hdr2.rwnd);
         assert_eq!(hdr.nack, hdr2.nack);
     }
 }
