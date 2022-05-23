@@ -8,7 +8,7 @@ use crate::{
         frag_hdr::{FragCommand, FragHeader, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN},
         packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
-    utils::{self, BufPasta, BufRdr, BufWtrTrait, SubbufWtr},
+    utils::{self, BufPasta, BufRdr, BufWtr, SubBufWtr},
 };
 
 pub struct YatcpUpload {
@@ -66,7 +66,7 @@ impl YatcpUpload {
         // assert!(PACKET_HDR_LEN + ACK_HDR_LEN < MTU);
     }
 
-    pub fn to_send(&mut self, buf: utils::BufWtr) {
+    pub fn to_send(&mut self, buf: utils::OwnedBufWtr) {
         if buf.is_empty() {
             return;
         }
@@ -75,13 +75,14 @@ impl YatcpUpload {
         self.check_rep();
     }
 
-    pub fn flush_packet(&mut self, wtr: &mut impl BufWtrTrait) -> bool {
+    pub fn append_packet_to(&mut self, wtr: &mut impl BufWtr) -> bool {
         assert!(PACKET_HDR_LEN + ACK_HDR_LEN <= wtr.back_len());
         assert!(PACKET_HDR_LEN + PUSH_HDR_LEN < wtr.back_len());
 
-        let mut subwtr = SubbufWtr::new(wtr.back_free_space(), PACKET_HDR_LEN);
+        let mut subwtr = SubBufWtr::new(wtr.back_free_space(), PACKET_HDR_LEN);
 
-        let is_written = self.append_frags_to(&mut subwtr);
+        self.append_frags_to(&mut subwtr);
+        let is_written = !subwtr.is_empty();
 
         if is_written {
             // packet header
@@ -101,16 +102,18 @@ impl YatcpUpload {
     }
 
     #[inline]
-    fn append_frags_to(&mut self, wtr: &mut impl BufWtrTrait) -> bool {
+    fn append_frags_to(&mut self, wtr: &mut impl BufWtr) {
         if self.to_ack_queue.is_empty() && self.to_send_queue.is_empty() {
-            return false;
+            assert!(wtr.is_empty());
+            return;
         }
 
         // piggyback ack
         loop {
             if !(ACK_HDR_LEN <= wtr.back_len()) {
                 self.check_rep();
-                return true;
+                assert!(!wtr.is_empty());
+                return;
             }
             let ack = match self.to_ack_queue.pop_front() {
                 Some(ack) => ack,
@@ -124,12 +127,13 @@ impl YatcpUpload {
             .unwrap();
             wtr.append(&hdr.to_bytes()).unwrap();
         }
-
+        
         // write push from sending
         for (_seq, frag) in self.sending_queue.iter() {
             if !(PUSH_HDR_LEN < wtr.back_len()) {
                 self.check_rep();
-                return true;
+                assert!(!wtr.is_empty());
+                return;
             }
             if !frag.is_timeout(&self.re_tx_timeout) {
                 continue;
@@ -141,17 +145,20 @@ impl YatcpUpload {
             wtr.append(&hdr.to_bytes()).unwrap();
             frag.body.append_to(wtr).unwrap();
         }
-
+        
         if !(PUSH_HDR_LEN < wtr.back_len()) {
             self.check_rep();
-            return true;
+            assert!(!wtr.is_empty());
+            return;
         }
         if !(self.sending_queue.len() < u16::max(self.remote_rwnd, 1) as usize) {
             self.check_rep();
             if wtr.is_empty() {
-                return false;
+                assert!(wtr.is_empty());
+                return;
             } else {
-                return true;
+                assert!(!wtr.is_empty());
+                return;
             }
         }
 
@@ -193,7 +200,7 @@ impl YatcpUpload {
 
         self.check_rep();
         assert!(!wtr.is_empty());
-        return true;
+        return;
     }
 
     fn build_push_header(&self, seq: u32, len: u32) -> FragHeader {
@@ -238,7 +245,7 @@ mod tests {
 
     use crate::{
         protocols::yatcp::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
-        utils::{BufWtr, BufWtrTrait},
+        utils::{OwnedBufWtr, BufWtr},
         yatcp::yatcp_upload::YatcpUploadBuilder,
     };
 
@@ -251,10 +258,10 @@ mod tests {
             re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
-        let buf = BufWtr::new(MTU / 2, 0);
+        let buf = OwnedBufWtr::new(MTU / 2, 0);
         upload.to_send(buf);
-        let mut packet = BufWtr::new(MTU, 0);
-        let is_written = upload.flush_packet(&mut packet);
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to(&mut packet);
         assert!(!is_written);
     }
 
@@ -265,12 +272,12 @@ mod tests {
             re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
-        let mut buf = BufWtr::new(MTU / 2, 0);
+        let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin = vec![0, 1, 2];
         buf.append(&origin).unwrap();
         upload.to_send(buf);
-        let mut packet = BufWtr::new(MTU, 0);
-        let is_written = upload.flush_packet(&mut packet);
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to(&mut packet);
         match is_written {
             true => {
                 assert_eq!(
@@ -282,7 +289,7 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        assert!(!upload.flush_packet(&mut packet));
+        assert!(!upload.append_packet_to(&mut packet));
     }
 
     #[test]
@@ -292,16 +299,16 @@ mod tests {
             re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
-        let mut buf = BufWtr::new(MTU / 2, 0);
+        let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
         upload.to_send(buf);
-        let mut buf = BufWtr::new(MTU / 2, 0);
+        let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![3, 4];
         buf.append(&origin2).unwrap();
         upload.to_send(buf);
-        let mut packet = BufWtr::new(MTU, 0);
-        let is_written = upload.flush_packet(&mut packet);
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to(&mut packet);
         match is_written {
             true => {
                 assert_eq!(
@@ -321,7 +328,7 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        assert!(!upload.flush_packet(&mut packet));
+        assert!(!upload.append_packet_to(&mut packet));
     }
 
     #[test]
@@ -331,16 +338,16 @@ mod tests {
             re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
-        let mut buf = BufWtr::new(MTU / 2, 0);
+        let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
         upload.to_send(buf);
-        let mut buf = BufWtr::new(MTU, 0);
+        let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin2 = vec![3; MTU];
         buf.append(&origin2).unwrap();
         upload.to_send(buf);
-        let mut packet = BufWtr::new(MTU, 0);
-        let is_written = upload.flush_packet(&mut packet);
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to(&mut packet);
         match is_written {
             true => {
                 assert_eq!(packet.data_len(), MTU);
@@ -357,13 +364,13 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        let is_written = upload.flush_packet(&mut packet);
+        let is_written = upload.append_packet_to(&mut packet);
         assert!(!is_written);
 
         upload.set_remote_rwnd(10);
 
         packet.reset_data(0);
-        let is_written = upload.flush_packet(&mut packet);
+        let is_written = upload.append_packet_to(&mut packet);
         match is_written {
             true => {
                 assert_eq!(
@@ -378,7 +385,7 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        assert!(!upload.flush_packet(&mut packet));
+        assert!(!upload.append_packet_to(&mut packet));
     }
 
     #[test]
@@ -388,16 +395,16 @@ mod tests {
             re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
-        let mut buf = BufWtr::new(MTU, 0);
+        let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin1 = vec![3; MTU];
         buf.append(&origin1).unwrap();
         upload.to_send(buf);
-        let mut buf = BufWtr::new(MTU / 2, 0);
+        let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![0, 1, 2];
         buf.append(&origin2).unwrap();
         upload.to_send(buf);
-        let mut packet = BufWtr::new(MTU, 0);
-        let is_written = upload.flush_packet(&mut packet);
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to(&mut packet);
         // packet: _hdr hdr mtu-_hdr-hdr
         // origin:          1[0..mtu-_hdr-hdr]
         match is_written {
@@ -411,13 +418,13 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        let is_written = upload.flush_packet(&mut packet);
+        let is_written = upload.append_packet_to(&mut packet);
         assert!(!is_written);
 
         upload.set_remote_rwnd(10);
 
         packet.reset_data(0);
-        let is_written = upload.flush_packet(&mut packet);
+        let is_written = upload.append_packet_to(&mut packet);
         // packet: _hdr hdr _hdr+hdr             3
         // origin:          1[mtu-_hdr-hdr..mtu] 2[0..3]
         match is_written {
@@ -444,6 +451,6 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        assert!(!upload.flush_packet(&mut packet));
+        assert!(!upload.append_packet_to(&mut packet));
     }
 }

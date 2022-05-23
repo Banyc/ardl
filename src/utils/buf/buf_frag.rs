@@ -1,14 +1,14 @@
 use std::{ops::Range, rc::Rc};
 
-use super::{BufWtr, BufWtrTrait};
+use super::{OwnedBufWtr, BufWtr};
 
 pub struct BufFrag {
-    buf: Rc<BufWtr>,
+    buf: Rc<OwnedBufWtr>,
     range: Range<usize>,
 }
 
 pub struct BufFragBuilder {
-    pub buf: Rc<BufWtr>,
+    pub buf: Rc<OwnedBufWtr>,
     pub range: Range<usize>,
 }
 
@@ -40,13 +40,13 @@ impl BufFrag {
 mod tests {
     use std::rc::Rc;
 
-    use crate::utils::{BufWtr, BufWtrTrait};
+    use crate::utils::{OwnedBufWtr, BufWtr};
 
     use super::BufFragBuilder;
 
     #[test]
     fn frag() {
-        let mut buf = BufWtr::new(1024, 512);
+        let mut buf = OwnedBufWtr::new(1024, 512);
         buf.append(&vec![0, 1, 2]).unwrap();
         let frag = BufFragBuilder {
             buf: Rc::new(buf),

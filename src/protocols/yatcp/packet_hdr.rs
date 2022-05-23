@@ -2,7 +2,7 @@ use std::io;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
-use crate::utils::{self, BufWtrTrait};
+use crate::utils::{self, BufWtr};
 
 pub const PACKET_HDR_LEN: usize = 6;
 
@@ -50,7 +50,7 @@ impl PacketHeader {
         Ok(this)
     }
 
-    pub fn prepend_to(&self, buf: &mut utils::BufWtr) -> Result<(), Error> {
+    pub fn prepend_to(&self, buf: &mut utils::OwnedBufWtr) -> Result<(), Error> {
         let hdr = self.to_bytes();
         buf.prepend(&hdr).map_err(|_e| Error::NotEnoughSpace)?;
         Ok(())
@@ -68,7 +68,7 @@ impl PacketHeader {
 mod tests {
     use std::io::Cursor;
 
-    use crate::utils::{BufWtr, BufWtrTrait};
+    use crate::utils::{OwnedBufWtr, BufWtr};
 
     use super::*;
 
@@ -80,7 +80,7 @@ mod tests {
         }
         .build()
         .unwrap();
-        let mut buf = BufWtr::new(1024, 512);
+        let mut buf = OwnedBufWtr::new(1024, 512);
         buf.prepend(&hdr.to_bytes()).unwrap();
         let mut rdr = Cursor::new(buf.data());
         let hdr2 = PacketHeader::from_bytes(&mut rdr).unwrap();

@@ -1,6 +1,6 @@
-use super::{BufRdr, BufWtr};
+use super::{BufRdr, OwnedBufWtr};
 
 pub enum BufAny {
     Reader(BufRdr),
-    Writer(BufWtr),
+    Writer(OwnedBufWtr),
 }

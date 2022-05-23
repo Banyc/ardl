@@ -1,4 +1,4 @@
-use super::{BufFrag, BufWtr, BufWtrTrait};
+use super::{BufFrag, OwnedBufWtr, BufWtr};
 
 pub struct BufPasta {
     frags: Vec<BufFrag>,
@@ -39,7 +39,7 @@ impl BufPasta {
         self.check_rep();
     }
 
-    pub fn append_to(&self, wtr: &mut impl BufWtrTrait) -> Result<(), Error> {
+    pub fn append_to(&self, wtr: &mut impl BufWtr) -> Result<(), Error> {
         if wtr.back_len() < self.len {
             return Err(Error::NotEnoughSpace);
         }
@@ -49,7 +49,7 @@ impl BufPasta {
         Ok(())
     }
 
-    pub fn prepend_to(&self, wtr: &mut BufWtr) -> Result<(), Error> {
+    pub fn prepend_to(&self, wtr: &mut OwnedBufWtr) -> Result<(), Error> {
         if wtr.front_len() < self.len {
             return Err(Error::NotEnoughSpace);
         }
@@ -62,19 +62,19 @@ impl BufPasta {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{BufRdr, BufWtr, BufWtrTrait};
+    use crate::utils::{BufRdr, OwnedBufWtr, BufWtr};
 
     use super::BufPasta;
 
     #[test]
     fn append() {
-        let mut wtr = BufWtr::new(1024, 512);
+        let mut wtr = OwnedBufWtr::new(1024, 512);
         let mut pasta = BufPasta::new();
         let origin1 = vec![0, 1, 2, 3];
-        let mut wtr1 = BufWtr::new(1024, 512);
+        let mut wtr1 = OwnedBufWtr::new(1024, 512);
         wtr1.append(&origin1).unwrap();
         let origin2 = vec![4];
-        let mut wtr2 = BufWtr::new(1024, 512);
+        let mut wtr2 = OwnedBufWtr::new(1024, 512);
         wtr2.append(&origin2).unwrap();
         let mut rdr1 = BufRdr::new(wtr1);
         let mut rdr2 = BufRdr::new(wtr2);

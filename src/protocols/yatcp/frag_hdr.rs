@@ -116,7 +116,7 @@ impl PartialEq for FragHeader {
 mod tests {
     use std::io::Cursor;
 
-    use crate::utils::{BufWtr, BufWtrTrait};
+    use crate::utils::{OwnedBufWtr, BufWtr};
 
     use super::*;
 
@@ -128,7 +128,7 @@ mod tests {
         }
         .build()
         .unwrap();
-        let mut buf = BufWtr::new(1024, 512);
+        let mut buf = OwnedBufWtr::new(1024, 512);
         buf.prepend(&hdr.to_bytes()).unwrap();
         let mut rdr = Cursor::new(buf.data());
         let hdr2 = FragHeader::from_bytes(&mut rdr).unwrap();

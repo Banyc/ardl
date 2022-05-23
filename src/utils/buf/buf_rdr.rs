@@ -1,9 +1,9 @@
 use std::rc::Rc;
 
-use super::{BufFrag, BufFragBuilder, BufWtr, BufWtrTrait};
+use super::{BufFrag, BufFragBuilder, OwnedBufWtr, BufWtr};
 
 pub struct BufRdr {
-    buf: Rc<BufWtr>,
+    buf: Rc<OwnedBufWtr>,
     cursor: usize,
 }
 
@@ -12,7 +12,7 @@ impl BufRdr {
         assert!(self.cursor <= self.buf.data_len());
     }
 
-    pub fn new(buf: BufWtr) -> Self {
+    pub fn new(buf: OwnedBufWtr) -> Self {
         let this = BufRdr {
             buf: Rc::new(buf),
             cursor: 0,
@@ -43,13 +43,13 @@ impl BufRdr {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{BufWtr, BufWtrTrait};
+    use crate::utils::{OwnedBufWtr, BufWtr};
 
     use super::BufRdr;
 
     #[test]
     fn try_read() {
-        let mut buf = BufWtr::new(1024, 512);
+        let mut buf = OwnedBufWtr::new(1024, 512);
         buf.append(&vec![0, 1, 2, 3, 4, 5]).unwrap();
         let mut rdr = BufRdr::new(buf);
         let frag0 = rdr.try_read(1).unwrap();

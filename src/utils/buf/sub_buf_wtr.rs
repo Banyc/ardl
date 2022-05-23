@@ -1,13 +1,13 @@
-use super::{buf_wtr_trait::Error, BufWtrTrait};
+use super::{buf_wtr::Error, BufWtr};
 
 #[derive(Debug)]
-pub struct SubbufWtr<'a> {
+pub struct SubBufWtr<'a> {
     buf: &'a mut [u8],
     start: usize,
     end: usize,
 }
 
-impl<'a> SubbufWtr<'a> {
+impl<'a> SubBufWtr<'a> {
     #[inline]
     pub fn check_rep(&self) {
         assert!(self.start <= self.end);
@@ -29,7 +29,7 @@ impl<'a> SubbufWtr<'a> {
     }
 }
 
-impl<'a> BufWtrTrait for SubbufWtr<'a> {
+impl<'a> BufWtr for SubBufWtr<'a> {
     #[inline]
     fn data_len(&self) -> usize {
         self.end - self.start
@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn copy() {
         let mut buf = vec![0; 1024];
-        let mut buf = SubbufWtr::new(&mut buf, 512);
+        let mut buf = SubBufWtr::new(&mut buf, 512);
         let tail = vec![1, 2, 3];
         let head = vec![4, 5, 6];
         buf.append(&tail).unwrap();
