@@ -6,3 +6,5 @@ mod buf_rdr;
 pub use buf_rdr::*;
 mod buf_any;
 pub use buf_any::*;
+mod buf_pasta;
+pub use buf_pasta::*;

@@ -8,13 +8,13 @@ use crate::{
         frag_hdr::{FragCommand, FragHeader, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN},
         packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
-    utils::{self, BufAny, BufRdr, BufWtr},
+    utils::{self, BufPasta, BufRdr, BufWtr},
 };
 
 const MTU: usize = 512;
 
 pub struct YatcpUpload {
-    to_send_queue: LinkedList<utils::BufAny>,
+    to_send_queue: LinkedList<utils::BufRdr>,
     sending_queue: BTreeMap<u32, SendingFrag>,
     to_ack_queue: LinkedList<u32>,
     receiving_queue_free_len: usize,
@@ -48,7 +48,7 @@ impl YatcpUploadBuilder {
 
 struct SendingFrag {
     seq: u32,
-    body: BufWtr,
+    body: BufPasta,
     last_seen: time::Instant,
 }
 
@@ -62,17 +62,7 @@ impl YatcpUpload {
     #[inline]
     fn check_rep(&self) {
         if !self.to_send_queue.is_empty() {
-            if let BufAny::Reader(rdr) = self.to_send_queue.front().unwrap() {
-                assert!(!rdr.is_empty());
-            }
-            if let BufAny::Writer(wtr) = self.to_send_queue.front().unwrap() {
-                assert!(
-                    // the existing data should not bigger than the max body length
-                    wtr.data_len() + PACKET_HDR_LEN + PUSH_HDR_LEN <= MTU
-                        // and the trailing buffer should be enough for new data
-                        && MTU <= wtr.data_len() + wtr.back_len()
-                );
-            }
+            assert!(!self.to_send_queue.front().unwrap().is_empty());
         }
         assert!(PACKET_HDR_LEN + PUSH_HDR_LEN < MTU);
         assert!(PACKET_HDR_LEN + ACK_HDR_LEN < MTU);
@@ -82,16 +72,8 @@ impl YatcpUpload {
         if buf.is_empty() {
             return;
         }
-        // the existing data should not bigger than the max body length
-        if buf.data_len() + PACKET_HDR_LEN + PUSH_HDR_LEN <= MTU
-            // and the trailing buffer should be enough for new data
-            && MTU <= PACKET_HDR_LEN + PUSH_HDR_LEN + buf.data_len() + buf.back_len()
-        {
-            self.to_send_queue.push_back(BufAny::Writer(buf));
-        } else {
-            let rdr = utils::BufRdr::new(buf);
-            self.to_send_queue.push_back(BufAny::Reader(rdr));
-        }
+        let rdr = BufRdr::new(buf);
+        self.to_send_queue.push_back(rdr);
         self.check_rep();
     }
 
@@ -148,12 +130,12 @@ impl YatcpUpload {
             if !frag.is_timeout(&self.re_tx_timeout) {
                 continue;
             }
-            if !(frag.body.data().len() + PUSH_HDR_LEN <= MTU - PACKET_HDR_LEN) {
+            if !(frag.body.len() + PUSH_HDR_LEN <= MTU - PACKET_HDR_LEN) {
                 continue;
             }
-            let hdr = self.build_push_header(frag.seq, frag.body.data().len() as u32);
+            let hdr = self.build_push_header(frag.seq, frag.body.len() as u32);
             wtr.append(&hdr.to_bytes()).unwrap();
-            wtr.append(frag.body.data()).unwrap();
+            frag.body.append_to(&mut wtr).unwrap();
         }
 
         if !(wtr.data_len() + PUSH_HDR_LEN < MTU - PACKET_HDR_LEN) {
@@ -175,33 +157,20 @@ impl YatcpUpload {
             // call those bytes "frag"
             let frag_body_limit = MTU - PACKET_HDR_LEN - PUSH_HDR_LEN - wtr.data_len();
             assert!(frag_body_limit != 0);
-            let mut frag_body = BufWtr::new(frag_body_limit, 0);
+            let mut frag_body = BufPasta::new();
             while !self.to_send_queue.is_empty() {
-                match self.to_send_queue.pop_front().unwrap() {
-                    BufAny::Reader(mut rdr) => {
-                        let buf = rdr
-                            .try_read(frag_body_limit - frag_body.data_len())
-                            .unwrap();
-                        frag_body.append(&buf.data()).unwrap();
-                        if !rdr.is_empty() {
-                            self.to_send_queue.push_front(BufAny::Reader(rdr));
-                        }
-                        if frag_body.data_len() == frag_body_limit {
-                            break;
-                        }
-                        assert!(frag_body.data_len() < frag_body_limit);
-                    }
-                    BufAny::Writer(x) => {
-                        if frag_body.is_empty() {
-                            frag_body.assign(x);
-                        } else {
-                            let rdr = BufRdr::new(x);
-                            self.to_send_queue.push_front(BufAny::Reader(rdr));
-                        }
-                    }
+                let mut rdr = self.to_send_queue.pop_front().unwrap();
+                let buf = rdr.try_read(frag_body_limit - frag_body.len()).unwrap();
+                frag_body.append(buf);
+                if !rdr.is_empty() {
+                    self.to_send_queue.push_front(rdr);
                 }
+                if frag_body.len() == frag_body_limit {
+                    break;
+                }
+                assert!(frag_body.len() < frag_body_limit);
             }
-            assert!(frag_body.data_len() <= frag_body_limit);
+            assert!(frag_body.len() <= frag_body_limit);
 
             let seq = self.next_seq_to_send;
             self.next_seq_to_send += 1;
@@ -211,9 +180,9 @@ impl YatcpUpload {
                 last_seen: time::Instant::now(),
             };
             // write the frag to output buffer
-            let hdr = self.build_push_header(frag.seq, frag.body.data().len() as u32);
+            let hdr = self.build_push_header(frag.seq, frag.body.len() as u32);
             wtr.append(&hdr.to_bytes()).unwrap();
-            wtr.append(frag.body.data()).unwrap();
+            frag.body.append_to(&mut wtr).unwrap();
             // register the frag to sending_queue
             self.sending_queue.insert(frag.seq, frag);
         }
