@@ -60,6 +60,7 @@ impl PacketHeader {
         let mut hdr = Vec::new();
         hdr.write_u16::<BigEndian>(self.wnd).unwrap();
         hdr.write_u32::<BigEndian>(self.nack).unwrap();
+        assert_eq!(hdr.len(), PACKET_HDR_LEN);
         hdr
     }
 }

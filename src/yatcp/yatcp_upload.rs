@@ -90,7 +90,9 @@ impl YatcpUpload {
             }
             .build()
             .unwrap();
-            subwtr.prepend(&hdr.to_bytes()).unwrap();
+            let bytes = hdr.to_bytes();
+            assert_eq!(bytes.len(), PACKET_HDR_LEN);
+            subwtr.prepend(&bytes).unwrap();
 
             let subwtr_len = subwtr.data_len();
 

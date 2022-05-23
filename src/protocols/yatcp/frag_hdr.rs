@@ -83,8 +83,11 @@ impl FragHeader {
         match self.cmd {
             FragCommand::Push { len } => {
                 hdr.write_u32::<BigEndian>(len).unwrap();
+                assert_eq!(hdr.len(), PUSH_HDR_LEN);
             }
-            FragCommand::Ack => (),
+            FragCommand::Ack => {
+                assert_eq!(hdr.len(), ACK_HDR_LEN);
+            }
         }
         hdr
     }
