@@ -112,6 +112,11 @@ impl YatcpDownload {
 
             match hdr.cmd() {
                 FragCommand::Push { len } => {
+                    if *len == 0 {
+                        // TODO: review
+                        // if `cmd::push`, `len` is not allowed to be `0`
+                        break;
+                    }
                     let body = match rdr.try_slice(*len as usize) {
                         Some(x) => x,
                         // no transactions are happening => no need to compensate

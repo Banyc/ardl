@@ -47,7 +47,11 @@ pub enum Error {
 
 impl FragHeader {
     #[inline]
-    fn check_rep(&self) {}
+    fn check_rep(&self) {
+        if let FragCommand::Push { len } = self.cmd {
+            assert!(len > 0);
+        }
+    }
 
     pub fn from_bytes(rdr: &mut io::Cursor<&[u8]>) -> Result<Self, Error> {
         let seq = rdr
@@ -62,6 +66,9 @@ impl FragHeader {
                 let len = rdr
                     .read_u32::<BigEndian>()
                     .map_err(|_e| Error::Decoding { field: "len" })?;
+                if len == 0 {
+                    return Err(Error::Decoding { field: "len" })
+                }
                 FragCommand::Push { len }
             }
             CommandType::Ack => FragCommand::Ack,

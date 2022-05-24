@@ -80,7 +80,7 @@ impl YatcpUpload {
 
     pub fn append_packet_to_and_if_written(&mut self, wtr: &mut impl BufWtr) -> bool {
         assert!(PACKET_HDR_LEN + ACK_HDR_LEN <= wtr.back_len());
-        assert!(PACKET_HDR_LEN + PUSH_HDR_LEN < wtr.back_len());
+        assert!(PACKET_HDR_LEN + PUSH_HDR_LEN + 1 <= wtr.back_len());
 
         let mut sub_wtr = SubBufWtr::new(wtr.back_free_space(), PACKET_HDR_LEN);
 
@@ -139,7 +139,7 @@ impl YatcpUpload {
 
         // write push from sending
         for (&seq, frag) in self.sending_queue.iter() {
-            if !(PUSH_HDR_LEN < wtr.back_len()) {
+            if !(PUSH_HDR_LEN + 1 <= wtr.back_len()) {
                 self.check_rep();
                 assert!(!wtr.is_empty());
                 return;
@@ -204,6 +204,7 @@ impl YatcpUpload {
                 assert!(frag_body.len() < frag_body_limit);
             }
             assert!(frag_body.len() <= frag_body_limit);
+            assert!(frag_body.len() > 0);
 
             let seq = self.next_seq_to_send;
             self.next_seq_to_send += 1;
@@ -559,5 +560,24 @@ mod tests {
         upload.remove_sending(0);
 
         assert_eq!(upload.sending_queue.len(), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_not_enough_space_for_push() {
+        let mut upload = YatcpUploadBuilder {
+            local_receiving_queue_len: 0,
+            re_tx_timeout: time::Duration::from_secs(99),
+        }
+        .build();
+        upload.set_remote_rwnd(2);
+
+        let origin1 = vec![0, 1, 2];
+        {
+            let rdr = BufRdr::from_bytes(origin1);
+            upload.to_send(rdr);
+        }
+        let mut packet = OwnedBufWtr::new(PACKET_HDR_LEN + PUSH_HDR_LEN, 0);
+        upload.append_packet_to_and_if_written(&mut packet);
     }
 }
