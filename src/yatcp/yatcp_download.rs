@@ -56,6 +56,24 @@ impl YatcpDownload {
         received
     }
 
+    pub fn recv_max(&mut self, max_len: usize) -> Option<BufFrag> {
+        let received = match self.received_queue.pop_front() {
+            Some(x) => {
+                if x.len() > max_len {
+                    let slice_front = x.slice(0..max_len).unwrap();
+                    let slice_end = x.slice(max_len..x.len()).unwrap();
+                    self.received_queue.push_front(slice_end);
+                    Some(slice_front)
+                } else {
+                    Some(x)
+                }
+            }
+            None => None,
+        };
+        self.check_rep();
+        received
+    }
+
     pub fn input(&mut self, mut rdr: utils::BufRdr) -> Result<SetUploadStates, Error> {
         let partial_state_changes = self.handle_packet(&mut rdr)?;
         let state_changes = SetUploadStates {
@@ -475,6 +493,44 @@ mod tests {
             assert_eq!(changes.remote_seqs_to_ack, vec![]);
             assert_eq!(changes.acked_local_seqs, vec![]);
             assert!(download.recv().is_none());
+        }
+    }
+
+    #[test]
+    fn test_recv_max() {
+        let mut download = YatcpDownloadBuilder {
+            max_local_receiving_queue_len: 3,
+        }
+        .build();
+
+        let mut buf = Vec::new();
+        {
+            let packet_hdr = PacketHeaderBuilder { rwnd: 2, nack: 0 }.build().unwrap();
+            buf.append(&mut packet_hdr.to_bytes());
+        }
+        {
+            let push_hdr1 = FragHeaderBuilder {
+                seq: 0,
+                cmd: FragCommand::Push { len: 4 },
+            }
+            .build()
+            .unwrap();
+            let mut push_body1 = vec![0, 1, 2, 3];
+            buf.append(&mut push_hdr1.to_bytes());
+            buf.append(&mut push_body1);
+        }
+        {
+            let rdr = BufRdr::from_bytes(buf);
+            let changes = download.input(rdr).unwrap();
+            assert_eq!(changes.local_next_seq_to_receive, 1);
+            assert_eq!(changes.local_receiving_queue_free_len, 3);
+            assert_eq!(changes.remote_nack, 0);
+            assert_eq!(changes.remote_rwnd, 2);
+            assert_eq!(changes.remote_seqs_to_ack, vec![0]);
+            assert_eq!(changes.acked_local_seqs, vec![]);
+            assert_eq!(download.recv_max(1).unwrap().data(), vec![0]);
+            assert_eq!(download.recv_max(2).unwrap().data(), vec![1, 2]);
+            assert_eq!(download.recv_max(10).unwrap().data(), vec![3]);
         }
     }
 }
