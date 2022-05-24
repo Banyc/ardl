@@ -49,6 +49,7 @@ impl YatcpDownload {
     #[inline]
     fn check_rep(&self) {
         assert!(self.max_local_receiving_queue_len > 0);
+        assert!(self.max_local_receiving_queue_len <= u16::MAX as usize);
         assert!(self.receiving_queue.len() <= self.max_local_receiving_queue_len);
         for (&seq, _) in &self.receiving_queue {
             assert!(self.local_next_seq_to_receive < seq);
