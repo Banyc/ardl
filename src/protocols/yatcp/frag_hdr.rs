@@ -67,7 +67,7 @@ impl FragHeader {
                     .read_u32::<BigEndian>()
                     .map_err(|_e| Error::Decoding { field: "len" })?;
                 if len == 0 {
-                    return Err(Error::Decoding { field: "len" })
+                    return Err(Error::Decoding { field: "len" });
                 }
                 FragCommand::Push { len }
             }
