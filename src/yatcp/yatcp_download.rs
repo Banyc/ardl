@@ -134,8 +134,15 @@ impl YatcpDownload {
                         // schedule uploader to ack this seq
                         remote_seqs_to_ack.push(hdr.seq());
 
-                        // insert this fragment to rwnd
-                        self.receiving_queue.insert(hdr.seq(), body);
+                        if hdr.seq() == self.local_next_seq_to_receive {
+                            // skip inserting this consecutive fragment to rwnd
+                            // hot path
+                            self.received_queue.push_back(body);
+                            self.local_next_seq_to_receive += 1;
+                        } else {
+                            // insert this fragment to rwnd
+                            self.receiving_queue.insert(hdr.seq(), body);
+                        }
 
                         // pop consecutive fragments from the rwnd to the ready queue
                         while let Some(frag) =
