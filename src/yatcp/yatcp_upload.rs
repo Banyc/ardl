@@ -137,8 +137,9 @@ impl YatcpUpload {
             wtr.append(&bytes).unwrap();
         }
 
+        // retransmission
         // write push from sending
-        for (&seq, frag) in self.sending_queue.iter() {
+        for (&seq, frag) in self.sending_queue.iter_mut() {
             if !(PUSH_HDR_LEN + 1 <= wtr.back_len()) {
                 self.check_rep();
                 assert!(!wtr.is_empty());
@@ -162,6 +163,7 @@ impl YatcpUpload {
             assert_eq!(bytes.len(), PUSH_HDR_LEN);
             wtr.append(&bytes).unwrap();
             frag.body.append_to(wtr).unwrap();
+            frag.last_seen = Instant::now(); // TODO: test cases
         }
 
         if self.to_send_queue.is_empty() {
