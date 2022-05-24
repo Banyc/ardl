@@ -19,6 +19,7 @@ const MTU: usize = PACKET_HDR_LEN + PUSH_HDR_LEN + 1;
 const FLUSH_INTERVAL_MIL: u64 = 10;
 const RETRANSMISSION_TIMEOUT_MIL: u64 = 0;
 const LISTEN_ADDR: &str = "0.0.0.0:19479";
+const MAX_LOCAL_RWND_LEN: usize = 2;
 
 fn main() {
     // socket
@@ -35,7 +36,7 @@ fn main() {
 
     // yatcp
     let (yatcp_upload, yatcp_download) = YatcpBuilder {
-        max_local_receiving_queue_len: 2,
+        max_local_receiving_queue_len: MAX_LOCAL_RWND_LEN,
         re_tx_timeout: Duration::from_millis(RETRANSMISSION_TIMEOUT_MIL),
     }
     .build();
