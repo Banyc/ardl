@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, VecDeque},
-    time,
+    ops::Range,
+    time::{self, Duration, Instant},
 };
 
 use crate::{
@@ -13,6 +14,15 @@ use crate::{
 
 use super::SetUploadStates;
 
+const ALPHA: f64 = 1.0 / 8.0;
+const MAX_RTO_MS: u64 = 60_000;
+const DEFAULT_RTO_MS: u64 = 200;
+const MIN_RTO_MS: u64 = 100;
+const RATIO_RTT_RTO: f64 = 1.5;
+static MAX_RTO: time::Duration = Duration::from_millis(MAX_RTO_MS);
+static DEFAULT_RTO: time::Duration = Duration::from_millis(DEFAULT_RTO_MS);
+static MIN_RTO: time::Duration = Duration::from_millis(MIN_RTO_MS);
+
 pub struct YatcpUpload {
     // modified by `append_frags_to`
     to_send_queue: VecDeque<utils::BufRdr>,
@@ -24,14 +34,14 @@ pub struct YatcpUpload {
     local_receiving_queue_free_len: usize,
     local_next_seq_to_receive: u32,
     remote_rwnd: u16,
+    fast_retransmission_wnd: FastRetransmissionWnd,
 
-    // immutable
-    re_tx_timeout: time::Duration,
+    // stat
+    stat: LocalStat,
 }
 
 pub struct YatcpUploadBuilder {
     pub local_receiving_queue_len: usize,
-    pub re_tx_timeout: time::Duration,
 }
 
 impl YatcpUploadBuilder {
@@ -42,9 +52,13 @@ impl YatcpUploadBuilder {
             to_ack_queue: VecDeque::new(),
             local_receiving_queue_free_len: self.local_receiving_queue_len,
             local_next_seq_to_receive: 0,
-            re_tx_timeout: self.re_tx_timeout,
             next_seq_to_send: 0,
             remote_rwnd: 0,
+            stat: LocalStat {
+                srtt: None,
+                retransmissions: 0,
+            },
+            fast_retransmission_wnd: FastRetransmissionWnd::new(),
         };
         this.check_rep();
         this
@@ -62,11 +76,23 @@ impl SendingFrag {
     }
 }
 
+#[derive(Debug)]
+pub enum Error {
+    InvalidStates,
+}
+
 impl YatcpUpload {
     #[inline]
     fn check_rep(&self) {
         if !self.to_send_queue.is_empty() {
             assert!(!self.to_send_queue.front().unwrap().is_empty());
+        }
+    }
+
+    pub fn stat(&self) -> Stat {
+        Stat {
+            srtt: self.stat.srtt,
+            retransmissions: self.stat.retransmissions,
         }
     }
 
@@ -139,16 +165,21 @@ impl YatcpUpload {
 
         // retransmission
         // write push from sending
+        let rto = self.rto();
         for (&seq, frag) in self.sending_queue.iter_mut() {
             if !(PUSH_HDR_LEN + 1 <= wtr.back_len()) {
                 self.check_rep();
                 assert!(!wtr.is_empty());
                 return;
             }
-            if !frag.is_timeout(&self.re_tx_timeout) {
+            if !(frag.body.len() + PUSH_HDR_LEN <= wtr.back_len()) {
                 continue;
             }
-            if !(frag.body.len() + PUSH_HDR_LEN <= wtr.back_len()) {
+            if !(frag.is_timeout(&rto)
+                // fast retransmit
+                // TODO: test cases
+                || self.fast_retransmission_wnd.contains(seq) && frag.is_timeout(&MIN_RTO))
+            {
                 continue;
             }
             let hdr = FragHeaderBuilder {
@@ -163,7 +194,9 @@ impl YatcpUpload {
             assert_eq!(bytes.len(), PUSH_HDR_LEN);
             wtr.append(&bytes).unwrap();
             frag.body.append_to(wtr).unwrap();
-            frag.last_seen = Instant::now(); // TODO: test cases
+            frag.last_seen = Instant::now(); // test case: `test_rto_once`
+            self.fast_retransmission_wnd.retransmitted(seq); // TODO: test cases
+            self.stat.retransmissions += 1;
         }
 
         if self.to_send_queue.is_empty() {
@@ -237,58 +270,167 @@ impl YatcpUpload {
     }
 
     #[inline]
-    pub fn set_remote_rwnd(&mut self, wnd: u16) {
+    pub fn rto(&self) -> time::Duration {
+        match self.stat.srtt {
+            Some(srtt) => {
+                let rto = srtt.mul_f64(RATIO_RTT_RTO);
+                let rto = Duration::min(rto, MAX_RTO);
+                let rto = Duration::max(rto, MIN_RTO);
+                rto
+            }
+            None => DEFAULT_RTO,
+        }
+    }
+
+    #[inline]
+    fn set_remote_rwnd(&mut self, wnd: u16) {
         self.remote_rwnd = wnd;
         self.check_rep();
     }
 
     #[inline]
-    pub fn set_local_next_seq_to_receive(&mut self, local_next_seq_to_receive: u32) {
+    fn set_local_next_seq_to_receive(&mut self, local_next_seq_to_receive: u32) {
         self.local_next_seq_to_receive = local_next_seq_to_receive;
         self.check_rep();
     }
 
     #[inline]
-    pub fn add_remote_seq_to_ack(&mut self, remote_seq_to_ack: u32) {
+    fn add_remote_seq_to_ack(&mut self, remote_seq_to_ack: u32) {
         self.to_ack_queue.push_back(remote_seq_to_ack);
         self.check_rep();
     }
 
     #[inline]
-    pub fn remove_sending(&mut self, acked_local_seq: u32) {
-        self.sending_queue.remove(&acked_local_seq);
+    fn set_acked_local_seq(&mut self, acked_local_seq: u32) {
+        // remove the selected sequence
+        if let Some(frag) = self.sending_queue.remove(&acked_local_seq) {
+            // set smooth RTT
+            let frag_rtt = frag.last_seen.duration_since(Instant::now());
+            match self.stat.srtt {
+                Some(srtt) => {
+                    let new_srtt = srtt.mul_f64(1.0 - ALPHA) + frag_rtt.mul_f64(ALPHA);
+                    self.stat.srtt = Some(new_srtt);
+                }
+                None => self.stat.srtt = Some(frag_rtt),
+            }
+        }
         self.check_rep();
     }
 
     #[inline]
-    pub fn remove_sending_before(&mut self, remote_nack: u32) {
-        self.sending_queue.retain(|&seq, _| !(seq < remote_nack));
+    fn remove_sending_before(&mut self, remote_nack: u32) {
+        let mut to_removes = Vec::new();
+        for (&seq, _) in &self.sending_queue {
+            if seq < remote_nack {
+                to_removes.push(seq);
+            } else {
+                break;
+            }
+        }
+        for to_remove in to_removes {
+            self.sending_queue.remove(&to_remove);
+        }
         self.check_rep();
     }
 
     #[inline]
-    pub fn set_receiving_queue_free_len(&mut self, local_receiving_queue_free_len: usize) {
+    fn set_receiving_queue_free_len(&mut self, local_receiving_queue_free_len: usize) {
         self.local_receiving_queue_free_len = local_receiving_queue_free_len;
     }
 
     #[inline]
-    pub fn set_states(&mut self, delta: SetUploadStates) {
+    pub fn set_states(&mut self, delta: SetUploadStates) -> Result<(), Error> {
+        for &acked_local_seq in &delta.acked_local_seqs {
+            if acked_local_seq == delta.remote_nack {
+                return Err(Error::InvalidStates);
+            }
+        }
+
         self.set_remote_rwnd(delta.remote_rwnd);
         self.set_local_next_seq_to_receive(delta.local_next_seq_to_receive);
         self.remove_sending_before(delta.remote_nack);
         self.set_receiving_queue_free_len(delta.local_receiving_queue_free_len);
+        let mut max_acked_local_seq = None;
         for acked_local_seq in delta.acked_local_seqs {
-            self.remove_sending(acked_local_seq);
+            self.set_acked_local_seq(acked_local_seq);
+            max_acked_local_seq = Some(match max_acked_local_seq {
+                Some(x) => u32::max(x, acked_local_seq),
+                None => acked_local_seq,
+            });
         }
+        // to retransmit all sequences before the largest out-of-order sequence
+        if let Some(x) = max_acked_local_seq {
+            if delta.remote_nack < x {
+                self.fast_retransmission_wnd
+                    .set_boundaries(delta.remote_nack..x);
+            }
+        }
+
         for remote_seq_to_ack in delta.remote_seqs_to_ack {
             self.add_remote_seq_to_ack(remote_seq_to_ack);
         }
+        Ok(())
+    }
+}
+
+struct LocalStat {
+    srtt: Option<time::Duration>,
+    retransmissions: u64,
+}
+
+pub struct Stat {
+    pub srtt: Option<time::Duration>,
+    pub retransmissions: u64,
+}
+
+pub struct FastRetransmissionWnd {
+    start: u32,
+    end: u32, // exclusive
+}
+
+impl FastRetransmissionWnd {
+    fn check_rep(&self) {
+        assert!(self.start <= self.end);
+    }
+
+    pub fn new() -> Self {
+        let this = FastRetransmissionWnd { start: 0, end: 0 };
+        this.check_rep();
+        this
+    }
+
+    pub fn contains(&self, seq: u32) -> bool {
+        self.start <= seq && seq < self.end
+    }
+
+    pub fn is_not_retransmitted(&self, seq: u32) -> bool {
+        self.end <= seq
+    }
+
+    pub fn is_retransmitted(&self, seq: u32) -> bool {
+        seq < self.start
+    }
+
+    pub fn retransmitted(&mut self, seq: u32) {
+        if !self.contains(seq) {
+            return;
+        }
+        assert!(self.contains(seq));
+        self.start = seq + 1;
+        self.check_rep();
+    }
+
+    pub fn set_boundaries(&mut self, range: Range<u32>) {
+        assert!(range.start <= range.end);
+        self.start = range.start;
+        self.end = range.end;
+        self.check_rep();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time;
+    use std::thread;
 
     use crate::{
         protocols::yatcp::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
@@ -302,7 +444,6 @@ mod tests {
     fn test_empty() {
         let mut upload = YatcpUploadBuilder {
             local_receiving_queue_len: 0,
-            re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
         let buf = OwnedBufWtr::new(MTU / 2, 0);
@@ -317,7 +458,6 @@ mod tests {
     fn test_few_1() {
         let mut upload = YatcpUploadBuilder {
             local_receiving_queue_len: 0,
-            re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
@@ -345,7 +485,6 @@ mod tests {
     fn test_few_2() {
         let mut upload = YatcpUploadBuilder {
             local_receiving_queue_len: 0,
-            re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
@@ -387,7 +526,6 @@ mod tests {
     fn test_few_many() {
         let mut upload = YatcpUploadBuilder {
             local_receiving_queue_len: 0,
-            re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
@@ -449,7 +587,6 @@ mod tests {
     fn test_many_few() {
         let mut upload = YatcpUploadBuilder {
             local_receiving_queue_len: 0,
-            re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
         let mut buf = OwnedBufWtr::new(MTU, 0);
@@ -517,7 +654,6 @@ mod tests {
     fn test_ack1() {
         let mut upload = YatcpUploadBuilder {
             local_receiving_queue_len: 0,
-            re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
         upload.set_remote_rwnd(2);
@@ -559,7 +695,7 @@ mod tests {
         assert_eq!(upload.next_seq_to_send, 1);
         assert_eq!(upload.sending_queue.len(), 1);
 
-        upload.remove_sending(0);
+        upload.set_acked_local_seq(0);
 
         assert_eq!(upload.sending_queue.len(), 0);
     }
@@ -569,7 +705,6 @@ mod tests {
     fn test_not_enough_space_for_push() {
         let mut upload = YatcpUploadBuilder {
             local_receiving_queue_len: 0,
-            re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
         upload.set_remote_rwnd(2);
@@ -581,5 +716,34 @@ mod tests {
         }
         let mut packet = OwnedBufWtr::new(PACKET_HDR_LEN + PUSH_HDR_LEN, 0);
         upload.append_packet_to_and_if_written(&mut packet);
+    }
+
+    #[test]
+    fn test_rto_once() {
+        let mut upload = YatcpUploadBuilder {
+            local_receiving_queue_len: 0,
+        }
+        .build();
+        upload.set_remote_rwnd(2);
+
+        let origin1 = vec![0, 1, 2];
+        {
+            let rdr = BufRdr::from_bytes(origin1);
+            upload.to_send(rdr);
+        }
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        assert!(is_written);
+
+        thread::sleep(upload.rto());
+
+        packet.reset_data(0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        // last_seen of the fragment is refreshed
+        assert!(is_written);
+
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        // the fragment doesn't timeout
+        assert!(!is_written);
     }
 }

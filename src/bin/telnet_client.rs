@@ -16,8 +16,7 @@ use crate_yatcp::{
 
 // const MTU: usize = 512;
 const MTU: usize = PACKET_HDR_LEN + PUSH_HDR_LEN + 1;
-const FLUSH_INTERVAL_MIL: u64 = 10;
-const RETRANSMISSION_TIMEOUT_MIL: u64 = 0;
+const FLUSH_INTERVAL_MS: u64 = 10;
 const LISTEN_ADDR: &str = "0.0.0.0:19479";
 const MAX_LOCAL_RWND_LEN: usize = 2;
 
@@ -37,7 +36,6 @@ fn main() {
     // yatcp
     let (yatcp_upload, yatcp_download) = YatcpBuilder {
         max_local_receiving_queue_len: MAX_LOCAL_RWND_LEN,
-        re_tx_timeout: Duration::from_millis(RETRANSMISSION_TIMEOUT_MIL),
     }
     .build();
 
@@ -83,7 +81,7 @@ fn main() {
 
 fn timer(uploading_messaging_tx: Arc<mpsc::SyncSender<UploadingMessaging>>) {
     loop {
-        thread::sleep(Duration::from_millis(FLUSH_INTERVAL_MIL));
+        thread::sleep(Duration::from_millis(FLUSH_INTERVAL_MS));
         uploading_messaging_tx
             .send(UploadingMessaging::Flush)
             .unwrap();
@@ -99,7 +97,7 @@ fn yatcp_uploading(
         let msg = messaging.recv().unwrap();
         match msg {
             UploadingMessaging::SetUploadStates(x) => {
-                upload.set_states(x);
+                upload.set_states(x).unwrap();
             }
             UploadingMessaging::Flush => {
                 let mut wtr = OwnedBufWtr::new(MTU, 0);

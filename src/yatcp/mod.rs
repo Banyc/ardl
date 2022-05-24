@@ -1,5 +1,3 @@
-use std::time;
-
 use self::{
     yatcp_download::{YatcpDownload, YatcpDownloadBuilder},
     yatcp_upload::{YatcpUpload, YatcpUploadBuilder},
@@ -10,14 +8,12 @@ pub mod yatcp_upload;
 
 pub struct YatcpBuilder {
     pub max_local_receiving_queue_len: usize,
-    pub re_tx_timeout: time::Duration,
 }
 
 impl YatcpBuilder {
     pub fn build(self) -> (YatcpUpload, YatcpDownload) {
         let upload = YatcpUploadBuilder {
             local_receiving_queue_len: self.max_local_receiving_queue_len,
-            re_tx_timeout: self.re_tx_timeout,
         }
         .build();
         let download = YatcpDownloadBuilder {
@@ -39,7 +35,7 @@ pub struct SetUploadStates {
 
 #[cfg(test)]
 mod tests {
-    use std::time;
+    use std::thread;
 
     use crate::utils::{BufRdr, BufWtr, OwnedBufWtr};
 
@@ -49,12 +45,10 @@ mod tests {
     fn test_few_1() {
         let (mut upload1, mut download1) = YatcpBuilder {
             max_local_receiving_queue_len: 2,
-            re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
         let (mut upload2, mut download2) = YatcpBuilder {
             max_local_receiving_queue_len: 2,
-            re_tx_timeout: time::Duration::from_secs(99),
         }
         .build();
 
@@ -82,7 +76,7 @@ mod tests {
 
             let inflight = BufRdr::from_wtr(inflight);
             let upload2_changes = download2.input(inflight).unwrap();
-            upload2.set_states(upload2_changes);
+            upload2.set_states(upload2_changes).unwrap();
 
             let recv2 = download2.recv().unwrap();
             assert_eq!(recv2.data(), vec![0, 1, 2]);
@@ -98,7 +92,7 @@ mod tests {
 
             let inflight = BufRdr::from_wtr(inflight);
             let upload1_changes = download1.input(inflight).unwrap();
-            upload1.set_states(upload1_changes);
+            upload1.set_states(upload1_changes).unwrap();
         }
     }
 
@@ -106,12 +100,10 @@ mod tests {
     fn test_retranmission() {
         let (mut upload1, mut _download1) = YatcpBuilder {
             max_local_receiving_queue_len: 2,
-            re_tx_timeout: time::Duration::from_secs(0),
         }
         .build();
         let (mut upload2, mut download2) = YatcpBuilder {
             max_local_receiving_queue_len: 2,
-            re_tx_timeout: time::Duration::from_secs(0),
         }
         .build();
 
@@ -139,7 +131,7 @@ mod tests {
 
             let inflight = BufRdr::from_wtr(inflight);
             let upload2_changes = download2.input(inflight).unwrap();
-            upload2.set_states(upload2_changes);
+            upload2.set_states(upload2_changes).unwrap();
 
             let recv2 = download2.recv().unwrap();
             assert_eq!(recv2.data(), vec![0, 1, 2]);
@@ -155,6 +147,7 @@ mod tests {
 
             // dropped
         }
+        thread::sleep(upload1.rto());
         // retransmit: 1 -> 2
         {
             let mut inflight = OwnedBufWtr::new(1024, 0);
