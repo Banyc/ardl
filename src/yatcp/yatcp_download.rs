@@ -42,6 +42,7 @@ pub enum Error {
 impl YatcpDownload {
     #[inline]
     fn check_rep(&self) {
+        assert!(self.max_local_receiving_queue_len > 0);
         assert!(self.receiving_queue.len() <= self.max_local_receiving_queue_len);
         for (&seq, _) in &self.receiving_queue {
             assert!(self.local_next_seq_to_receive < seq);
@@ -130,10 +131,13 @@ impl YatcpDownload {
                     {
                         // drop the fragment
                     } else {
-                        // insert this fragment to rwnd
-                        self.receiving_queue.insert(hdr.seq(), body);
+                        // schedule uploader to ack this seq
                         remote_seqs_to_ack.push(hdr.seq());
 
+                        // insert this fragment to rwnd
+                        self.receiving_queue.insert(hdr.seq(), body);
+
+                        // pop consecutive fragments from the rwnd to the ready queue
                         while let Some(frag) =
                             self.receiving_queue.remove(&self.local_next_seq_to_receive)
                         {
