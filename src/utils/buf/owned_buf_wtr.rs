@@ -9,7 +9,7 @@ pub struct OwnedBufWtr {
 
 impl OwnedBufWtr {
     #[inline]
-    pub fn check_rep(&self) {
+    fn check_rep(&self) {
         assert!(self.start <= self.end);
         assert!(self.end <= self.buf.len());
     }

@@ -1,14 +1,14 @@
-use std::{ops::Range, rc::Rc};
+use std::{ops::Range, sync::Arc};
 
 use super::{BufWtr, OwnedBufWtr};
 
 pub struct BufFrag {
-    buf: Rc<OwnedBufWtr>,
+    buf: Arc<OwnedBufWtr>,
     range: Range<usize>,
 }
 
 pub struct BufFragBuilder {
-    pub buf: Rc<OwnedBufWtr>,
+    pub buf: Arc<OwnedBufWtr>,
     pub range: Range<usize>,
 }
 
@@ -38,7 +38,8 @@ impl BufFrag {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
+
+    use std::sync::Arc;
 
     use crate::utils::{BufWtr, OwnedBufWtr};
 
@@ -49,7 +50,7 @@ mod tests {
         let mut buf = OwnedBufWtr::new(1024, 512);
         buf.append(&vec![0, 1, 2]).unwrap();
         let frag = BufFragBuilder {
-            buf: Rc::new(buf),
+            buf: Arc::new(buf),
             range: 1..3,
         }
         .build();

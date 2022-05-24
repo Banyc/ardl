@@ -1,12 +1,12 @@
 use std::{
     io::{self, Cursor},
-    rc::Rc,
+    sync::Arc,
 };
 
 use super::{BufFrag, BufFragBuilder, BufWtr, OwnedBufWtr};
 
 pub struct BufRdr {
-    buf: Rc<OwnedBufWtr>,
+    buf: Arc<OwnedBufWtr>,
     cursor: usize,
 }
 
@@ -22,7 +22,7 @@ impl BufRdr {
 
     pub fn from_wtr(wtr: OwnedBufWtr) -> Self {
         let this = BufRdr {
-            buf: Rc::new(wtr),
+            buf: Arc::new(wtr),
             cursor: 0,
         };
         this.check_rep();
@@ -52,7 +52,7 @@ impl BufRdr {
             return Err(Error::NotEnoughSpace);
         }
         let frag = BufFragBuilder {
-            buf: Rc::clone(&self.buf),
+            buf: Arc::clone(&self.buf),
             range: self.cursor..end,
         }
         .build();
@@ -67,7 +67,7 @@ impl BufRdr {
             return None;
         }
         let frag = BufFragBuilder {
-            buf: Rc::clone(&self.buf),
+            buf: Arc::clone(&self.buf),
             range: self.cursor..end,
         }
         .build();
