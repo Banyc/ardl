@@ -15,6 +15,7 @@ pub struct YatcpDownload {
     receiving_queue: BTreeMap<u32, BufFrag>,
     local_next_seq_to_receive: u32,
     max_local_receiving_queue_len: usize, // inclusive
+    stat: LocalStat,
 }
 
 pub struct YatcpDownloadBuilder {
@@ -28,6 +29,11 @@ impl YatcpDownloadBuilder {
             receiving_queue: BTreeMap::new(),
             local_next_seq_to_receive: 0,
             max_local_receiving_queue_len: self.max_local_receiving_queue_len,
+            stat: LocalStat {
+                out_of_windows: 0,
+                out_of_orders: 0,
+                decoding_errors: 0,
+            },
         };
         this.check_rep();
         this
@@ -47,6 +53,15 @@ impl YatcpDownload {
         for (&seq, _) in &self.receiving_queue {
             assert!(self.local_next_seq_to_receive < seq);
             break;
+        }
+    }
+
+    pub fn stat(&self) -> Stat {
+        Stat {
+            out_of_windows: self.stat.out_of_windows,
+            out_of_orders: self.stat.out_of_orders,
+            decoding_errors: self.stat.decoding_errors,
+            next_seq_to_receive: self.local_next_seq_to_receive,
         }
     }
 
@@ -95,7 +110,10 @@ impl YatcpDownload {
         let mut cursor = rdr.get_peek_cursor();
         let hdr = match PacketHeader::from_bytes(&mut cursor) {
             Ok(x) => x,
-            Err(_) => return Err(Error::Decoding),
+            Err(_) => {
+                self.stat.decoding_errors += 1;
+                return Err(Error::Decoding);
+            }
         };
         let read_len = cursor.position();
         drop(cursor);
@@ -123,7 +141,10 @@ impl YatcpDownload {
                 Ok(x) => x,
                 // TODO: review
                 // a whole fragment is ignorable => best efforts
-                Err(_) => break,
+                Err(_) => {
+                    self.stat.decoding_errors += 1;
+                    break;
+                }
             };
             let read_len = cursor.position();
             drop(cursor);
@@ -134,12 +155,16 @@ impl YatcpDownload {
                     if *len == 0 {
                         // TODO: review
                         // if `cmd::push`, `len` is not allowed to be `0`
+                        self.stat.decoding_errors += 1;
                         break;
                     }
                     let body = match rdr.try_slice(*len as usize) {
                         Some(x) => x,
                         // no transactions are happening => no need to compensate
-                        None => break,
+                        None => {
+                            self.stat.decoding_errors += 1;
+                            break;
+                        }
                     };
                     // if out of rwnd
                     if !(hdr.seq()
@@ -147,6 +172,7 @@ impl YatcpDownload {
                             + (self.max_local_receiving_queue_len as u32)
                         && self.local_next_seq_to_receive <= hdr.seq())
                     {
+                        self.stat.out_of_windows += 1;
                         // drop the fragment
                     } else {
                         // schedule uploader to ack this seq
@@ -193,6 +219,19 @@ struct HandlePacketStateChanges {
     frags: HandleFragsStateChanges,
     remote_rwnd: u16,
     remote_nack: u32,
+}
+
+struct LocalStat {
+    out_of_windows: u64,
+    out_of_orders: u64,
+    decoding_errors: u64,
+}
+
+pub struct Stat {
+    pub out_of_windows: u64,
+    pub out_of_orders: u64,
+    pub decoding_errors: u64,
+    pub next_seq_to_receive: u32,
 }
 
 #[cfg(test)]
