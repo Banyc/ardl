@@ -93,9 +93,9 @@ mod tests {
             range: 1..4,
         }
         .build();
-        
+
         // frag: [1, 2, 3]
-        
+
         let slice = frag.slice(1..2).unwrap();
         assert_eq!(slice.data(), vec![2]);
         let slice = frag.slice(0..2).unwrap();
