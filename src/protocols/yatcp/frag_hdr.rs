@@ -3,16 +3,18 @@ use std::io;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
+use crate::utils::Seq;
+
 pub const PUSH_HDR_LEN: usize = 9;
 pub const ACK_HDR_LEN: usize = 5;
 
 pub struct FragHeader {
-    seq: u32,
+    seq: Seq,
     cmd: FragCommand,
 }
 
 pub struct FragHeaderBuilder {
-    pub seq: u32,
+    pub seq: Seq,
     pub cmd: FragCommand,
 }
 
@@ -57,6 +59,7 @@ impl FragHeader {
         let seq = rdr
             .read_u32::<BigEndian>()
             .map_err(|_e| Error::Decoding { field: "seq" })?;
+        let seq = Seq::from_u32(seq);
         let cmd = rdr
             .read_u8()
             .map_err(|_e| Error::Decoding { field: "cmd" })?;
@@ -81,7 +84,7 @@ impl FragHeader {
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut hdr = Vec::new();
-        hdr.write_u32::<BigEndian>(self.seq).unwrap();
+        hdr.write_u32::<BigEndian>(self.seq.to_u32()).unwrap();
         let cmd = match self.cmd {
             FragCommand::Push { len: _ } => CommandType::Push,
             FragCommand::Ack => CommandType::Ack,
@@ -107,7 +110,7 @@ impl FragHeader {
 
     #[must_use]
     #[inline]
-    pub fn seq(&self) -> u32 {
+    pub fn seq(&self) -> Seq {
         self.seq
     }
 }
@@ -139,7 +142,7 @@ mod tests {
     #[test]
     fn test_1() {
         let hdr = FragHeaderBuilder {
-            seq: 345,
+            seq: Seq::from_u32(345),
             cmd: FragCommand::Push { len: 567 },
         }
         .build()

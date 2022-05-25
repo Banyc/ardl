@@ -9,7 +9,7 @@ use crate::{
         frag_hdr::{FragCommand, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN},
         packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
-    utils::{self, BufPasta, BufWtr, SubBufWtr},
+    utils::{self, BufPasta, BufWtr, Seq, SubBufWtr},
 };
 
 use super::SetUploadStates;
@@ -26,13 +26,13 @@ static MIN_RTO: time::Duration = Duration::from_millis(MIN_RTO_MS);
 pub struct YatcpUpload {
     // modified by `append_frags_to`
     to_send_queue: VecDeque<utils::BufRdr>,
-    sending_queue: BTreeMap<u32, SendingFrag>,
-    to_ack_queue: VecDeque<u32>,
-    next_seq_to_send: u32,
+    sending_queue: BTreeMap<Seq, SendingFrag>,
+    to_ack_queue: VecDeque<Seq>,
+    next_seq_to_send: Seq,
 
     // modified by setters
     local_receiving_queue_free_len: usize,
-    local_next_seq_to_receive: u32,
+    local_next_seq_to_receive: Seq,
     remote_rwnd: u16,
     fast_retransmission_wnd: FastRetransmissionWnd,
 
@@ -51,8 +51,8 @@ impl YatcpUploadBuilder {
             sending_queue: BTreeMap::new(),
             to_ack_queue: VecDeque::new(),
             local_receiving_queue_free_len: self.local_receiving_queue_len,
-            local_next_seq_to_receive: 0,
-            next_seq_to_send: 0,
+            local_next_seq_to_receive: Seq::from_u32(0),
+            next_seq_to_send: Seq::from_u32(0),
             remote_rwnd: 0,
             stat: LocalStat {
                 srtt: None,
@@ -242,7 +242,7 @@ impl YatcpUpload {
             assert!(frag_body.len() > 0);
 
             let seq = self.next_seq_to_send;
-            self.next_seq_to_send += 1;
+            self.next_seq_to_send.increment();
             let frag = SendingFrag {
                 body: frag_body,
                 last_seen: time::Instant::now(),
@@ -289,19 +289,19 @@ impl YatcpUpload {
     }
 
     #[inline]
-    fn set_local_next_seq_to_receive(&mut self, local_next_seq_to_receive: u32) {
+    fn set_local_next_seq_to_receive(&mut self, local_next_seq_to_receive: Seq) {
         self.local_next_seq_to_receive = local_next_seq_to_receive;
         self.check_rep();
     }
 
     #[inline]
-    fn add_remote_seq_to_ack(&mut self, remote_seq_to_ack: u32) {
+    fn add_remote_seq_to_ack(&mut self, remote_seq_to_ack: Seq) {
         self.to_ack_queue.push_back(remote_seq_to_ack);
         self.check_rep();
     }
 
     #[inline]
-    fn set_acked_local_seq(&mut self, acked_local_seq: u32) {
+    fn set_acked_local_seq(&mut self, acked_local_seq: Seq) {
         // remove the selected sequence
         if let Some(frag) = self.sending_queue.remove(&acked_local_seq) {
             // set smooth RTT
@@ -318,7 +318,7 @@ impl YatcpUpload {
     }
 
     #[inline]
-    fn remove_sending_before(&mut self, remote_nack: u32) {
+    fn remove_sending_before(&mut self, remote_nack: Seq) {
         let mut to_removes = Vec::new();
         for (&seq, _) in &self.sending_queue {
             if seq < remote_nack {
@@ -354,7 +354,7 @@ impl YatcpUpload {
         for acked_local_seq in delta.acked_local_seqs {
             self.set_acked_local_seq(acked_local_seq);
             max_acked_local_seq = Some(match max_acked_local_seq {
-                Some(x) => u32::max(x, acked_local_seq),
+                Some(x) => Seq::max(x, acked_local_seq),
                 None => acked_local_seq,
             });
         }
@@ -384,8 +384,8 @@ pub struct Stat {
 }
 
 pub struct FastRetransmissionWnd {
-    start: u32,
-    end: u32, // exclusive
+    start: Seq,
+    end: Seq, // exclusive
 }
 
 impl FastRetransmissionWnd {
@@ -394,33 +394,36 @@ impl FastRetransmissionWnd {
     }
 
     pub fn new() -> Self {
-        let this = FastRetransmissionWnd { start: 0, end: 0 };
+        let this = FastRetransmissionWnd {
+            start: Seq::from_u32(0),
+            end: Seq::from_u32(0),
+        };
         this.check_rep();
         this
     }
 
-    pub fn contains(&self, seq: u32) -> bool {
+    pub fn contains(&self, seq: Seq) -> bool {
         self.start <= seq && seq < self.end
     }
 
-    pub fn is_not_retransmitted(&self, seq: u32) -> bool {
+    pub fn is_not_retransmitted(&self, seq: Seq) -> bool {
         self.end <= seq
     }
 
-    pub fn is_retransmitted(&self, seq: u32) -> bool {
+    pub fn is_retransmitted(&self, seq: Seq) -> bool {
         seq < self.start
     }
 
-    pub fn retransmitted(&mut self, seq: u32) {
+    pub fn retransmitted(&mut self, seq: Seq) {
         if !self.contains(seq) {
             return;
         }
         assert!(self.contains(seq));
-        self.start = seq + 1;
+        self.start = seq.add_u32(1);
         self.check_rep();
     }
 
-    pub fn set_boundaries(&mut self, range: Range<u32>) {
+    pub fn set_boundaries(&mut self, range: Range<Seq>) {
         assert!(range.start <= range.end);
         self.start = range.start;
         self.end = range.end;
@@ -434,7 +437,7 @@ mod tests {
 
     use crate::{
         protocols::yatcp::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
-        utils::{BufRdr, BufWtr, OwnedBufWtr},
+        utils::{BufRdr, BufWtr, OwnedBufWtr, Seq},
         yatcp::yatcp_upload::YatcpUploadBuilder,
     };
 
@@ -517,7 +520,7 @@ mod tests {
             }
             false => panic!(),
         }
-        assert_eq!(upload.next_seq_to_send, 1);
+        assert_eq!(upload.next_seq_to_send.to_u32(), 1);
         packet.reset_data(0);
         assert!(!upload.append_packet_to_and_if_written(&mut packet));
     }
@@ -555,11 +558,11 @@ mod tests {
             }
             false => panic!(),
         }
-        assert_eq!(upload.next_seq_to_send, 1);
+        assert_eq!(upload.next_seq_to_send.to_u32(), 1);
         packet.reset_data(0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         assert!(!is_written);
-        assert_eq!(upload.next_seq_to_send, 1);
+        assert_eq!(upload.next_seq_to_send.to_u32(), 1);
 
         upload.set_remote_rwnd(10);
 
@@ -578,7 +581,7 @@ mod tests {
             }
             false => panic!(),
         }
-        assert_eq!(upload.next_seq_to_send, 2);
+        assert_eq!(upload.next_seq_to_send.to_u32(), 2);
         packet.reset_data(0);
         assert!(!upload.append_packet_to_and_if_written(&mut packet));
     }
@@ -692,10 +695,10 @@ mod tests {
             }
             false => panic!(),
         }
-        assert_eq!(upload.next_seq_to_send, 1);
+        assert_eq!(upload.next_seq_to_send.to_u32(), 1);
         assert_eq!(upload.sending_queue.len(), 1);
 
-        upload.set_acked_local_seq(0);
+        upload.set_acked_local_seq(Seq::from_u32(0));
 
         assert_eq!(upload.sending_queue.len(), 0);
     }

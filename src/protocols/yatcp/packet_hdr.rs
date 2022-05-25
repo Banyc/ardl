@@ -2,18 +2,18 @@ use std::io;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
-use crate::utils::{self, BufWtr};
+use crate::utils::{self, BufWtr, Seq};
 
 pub const PACKET_HDR_LEN: usize = 6;
 
 pub struct PacketHeader {
     rwnd: u16,
-    nack: u32,
+    nack: Seq,
 }
 
 pub struct PacketHeaderBuilder {
     pub rwnd: u16,
-    pub nack: u32,
+    pub nack: Seq,
 }
 
 impl PacketHeaderBuilder {
@@ -44,6 +44,7 @@ impl PacketHeader {
         let nack = rdr
             .read_u32::<BigEndian>()
             .map_err(|_e| Error::Decoding { field: "nack" })?;
+        let nack = Seq::from_u32(nack);
 
         let this = PacketHeader { rwnd, nack };
         this.check_rep();
@@ -59,7 +60,7 @@ impl PacketHeader {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut hdr = Vec::new();
         hdr.write_u16::<BigEndian>(self.rwnd).unwrap();
-        hdr.write_u32::<BigEndian>(self.nack).unwrap();
+        hdr.write_u32::<BigEndian>(self.nack.to_u32()).unwrap();
         assert_eq!(hdr.len(), PACKET_HDR_LEN);
         hdr
     }
@@ -70,7 +71,7 @@ impl PacketHeader {
     }
 
     #[inline]
-    pub fn nack(&self) -> u32 {
+    pub fn nack(&self) -> Seq {
         self.nack
     }
 }
@@ -87,7 +88,7 @@ mod tests {
     fn test_1() {
         let hdr = PacketHeaderBuilder {
             rwnd: 123,
-            nack: 456,
+            nack: Seq::from_u32(456),
         }
         .build()
         .unwrap();

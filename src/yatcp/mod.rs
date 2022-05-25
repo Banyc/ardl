@@ -1,3 +1,5 @@
+use crate::utils::Seq;
+
 use self::{
     yatcp_download::{YatcpDownload, YatcpDownloadBuilder},
     yatcp_upload::{YatcpUpload, YatcpUploadBuilder},
@@ -26,10 +28,10 @@ impl YatcpBuilder {
 
 pub struct SetUploadStates {
     pub remote_rwnd: u16,
-    pub remote_nack: u32,
-    pub local_next_seq_to_receive: u32,
-    pub remote_seqs_to_ack: Vec<u32>,
-    pub acked_local_seqs: Vec<u32>,
+    pub remote_nack: Seq,
+    pub local_next_seq_to_receive: Seq,
+    pub remote_seqs_to_ack: Vec<Seq>,
+    pub acked_local_seqs: Vec<Seq>,
     pub local_receiving_queue_free_len: usize,
 }
 

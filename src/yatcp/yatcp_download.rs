@@ -5,15 +5,15 @@ use crate::{
         frag_hdr::{FragCommand, FragHeader},
         packet_hdr::PacketHeader,
     },
-    utils::{self, BufFrag},
+    utils::{self, BufFrag, Seq},
 };
 
 use super::SetUploadStates;
 
 pub struct YatcpDownload {
     received_queue: VecDeque<BufFrag>,
-    receiving_queue: BTreeMap<u32, BufFrag>,
-    local_next_seq_to_receive: u32,
+    receiving_queue: BTreeMap<Seq, BufFrag>,
+    local_next_seq_to_receive: Seq,
     max_local_receiving_queue_len: usize, // inclusive
     stat: LocalStat,
 }
@@ -27,7 +27,7 @@ impl YatcpDownloadBuilder {
         let this = YatcpDownload {
             received_queue: VecDeque::new(),
             receiving_queue: BTreeMap::new(),
-            local_next_seq_to_receive: 0,
+            local_next_seq_to_receive: Seq::from_u32(0),
             max_local_receiving_queue_len: self.max_local_receiving_queue_len,
             stat: LocalStat {
                 out_of_windows: 0,
@@ -169,8 +169,9 @@ impl YatcpDownload {
                     };
                     // if out of rwnd
                     if !(hdr.seq()
-                        < self.local_next_seq_to_receive
-                            + (self.max_local_receiving_queue_len as u32)
+                        < self
+                            .local_next_seq_to_receive
+                            .add_u32(self.max_local_receiving_queue_len as u32)
                         && self.local_next_seq_to_receive <= hdr.seq())
                     {
                         self.stat.out_of_windows += 1;
@@ -183,7 +184,7 @@ impl YatcpDownload {
                             // skip inserting this consecutive fragment to rwnd
                             // hot path
                             self.received_queue.push_back(body);
-                            self.local_next_seq_to_receive += 1;
+                            self.local_next_seq_to_receive.increment();
                         } else {
                             // insert this fragment to rwnd
                             self.receiving_queue.insert(hdr.seq(), body);
@@ -194,7 +195,7 @@ impl YatcpDownload {
                             self.receiving_queue.remove(&self.local_next_seq_to_receive)
                         {
                             self.received_queue.push_back(frag);
-                            self.local_next_seq_to_receive += 1;
+                            self.local_next_seq_to_receive.increment();
                         }
                     }
                 }
@@ -212,14 +213,14 @@ impl YatcpDownload {
 }
 
 struct HandleFragsStateChanges {
-    remote_seqs_to_ack: Vec<u32>,
-    acked_local_seqs: Vec<u32>,
+    remote_seqs_to_ack: Vec<Seq>,
+    acked_local_seqs: Vec<Seq>,
 }
 
 struct HandlePacketStateChanges {
     frags: HandleFragsStateChanges,
     remote_rwnd: u16,
-    remote_nack: u32,
+    remote_nack: Seq,
 }
 
 struct LocalStat {
@@ -232,7 +233,7 @@ pub struct Stat {
     pub out_of_windows: u64,
     pub out_of_orders: u64,
     pub decoding_errors: u64,
-    pub next_seq_to_receive: u32,
+    pub next_seq_to_receive: Seq,
 }
 
 #[cfg(test)]
@@ -242,7 +243,7 @@ mod tests {
             frag_hdr::{FragCommand, FragHeaderBuilder},
             packet_hdr::PacketHeaderBuilder,
         },
-        utils::BufRdr,
+        utils::{BufRdr, Seq},
     };
 
     use super::YatcpDownloadBuilder;
@@ -268,10 +269,15 @@ mod tests {
         .build();
 
         let mut buf = Vec::new();
-        let packet_hdr = PacketHeaderBuilder { rwnd: 2, nack: 0 }.build().unwrap();
+        let packet_hdr = PacketHeaderBuilder {
+            rwnd: 2,
+            nack: Seq::from_u32(0),
+        }
+        .build()
+        .unwrap();
         buf.append(&mut packet_hdr.to_bytes());
         let push_hdr1 = FragHeaderBuilder {
-            seq: 0,
+            seq: Seq::from_u32(0),
             cmd: FragCommand::Push { len: 11 },
         }
         .build()
@@ -282,11 +288,12 @@ mod tests {
 
         let rdr = BufRdr::from_bytes(buf);
         let changes = download.input(rdr).unwrap();
-        assert_eq!(changes.local_next_seq_to_receive, 1);
+        assert_eq!(changes.local_next_seq_to_receive.to_u32(), 1);
         assert_eq!(changes.local_receiving_queue_free_len, 3);
-        assert_eq!(changes.remote_nack, 0);
+        assert_eq!(changes.remote_nack.to_u32(), 0);
         assert_eq!(changes.remote_rwnd, 2);
-        assert_eq!(changes.remote_seqs_to_ack, vec![0]);
+        let tmp: Vec<Seq> = vec![0].iter().map(|&x| Seq::from_u32(x)).collect();
+        assert_eq!(changes.remote_seqs_to_ack, tmp);
         assert_eq!(changes.acked_local_seqs, vec![]);
         assert_eq!(download.recv().unwrap().data(), vec![4; 11]);
     }
@@ -299,10 +306,15 @@ mod tests {
         .build();
 
         let mut buf = Vec::new();
-        let packet_hdr = PacketHeaderBuilder { rwnd: 2, nack: 0 }.build().unwrap();
+        let packet_hdr = PacketHeaderBuilder {
+            rwnd: 2,
+            nack: Seq::from_u32(0),
+        }
+        .build()
+        .unwrap();
         buf.append(&mut packet_hdr.to_bytes());
         let push_hdr1 = FragHeaderBuilder {
-            seq: 1,
+            seq: Seq::from_u32(1),
             cmd: FragCommand::Push { len: 11 },
         }
         .build()
@@ -313,11 +325,12 @@ mod tests {
 
         let rdr = BufRdr::from_bytes(buf);
         let changes = download.input(rdr).unwrap();
-        assert_eq!(changes.local_next_seq_to_receive, 0);
+        assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(changes.local_receiving_queue_free_len, 2);
-        assert_eq!(changes.remote_nack, 0);
+        assert_eq!(changes.remote_nack.to_u32(), 0);
         assert_eq!(changes.remote_rwnd, 2);
-        assert_eq!(changes.remote_seqs_to_ack, vec![1]);
+        let tmp: Vec<Seq> = vec![1].iter().map(|&x| Seq::from_u32(x)).collect();
+        assert_eq!(changes.remote_seqs_to_ack, tmp);
         assert_eq!(changes.acked_local_seqs, vec![]);
         assert!(download.recv().is_none());
     }
@@ -330,10 +343,15 @@ mod tests {
         .build();
 
         let mut buf = Vec::new();
-        let packet_hdr = PacketHeaderBuilder { rwnd: 2, nack: 0 }.build().unwrap();
+        let packet_hdr = PacketHeaderBuilder {
+            rwnd: 2,
+            nack: Seq::from_u32(0),
+        }
+        .build()
+        .unwrap();
         buf.append(&mut packet_hdr.to_bytes());
         let push_hdr1 = FragHeaderBuilder {
-            seq: 99,
+            seq: Seq::from_u32(99),
             cmd: FragCommand::Push { len: 11 },
         }
         .build()
@@ -344,9 +362,9 @@ mod tests {
 
         let rdr = BufRdr::from_bytes(buf);
         let changes = download.input(rdr).unwrap();
-        assert_eq!(changes.local_next_seq_to_receive, 0);
+        assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(changes.local_receiving_queue_free_len, 3);
-        assert_eq!(changes.remote_nack, 0);
+        assert_eq!(changes.remote_nack.to_u32(), 0);
         assert_eq!(changes.remote_rwnd, 2);
         assert_eq!(changes.remote_seqs_to_ack, vec![]);
         assert_eq!(changes.acked_local_seqs, vec![]);
@@ -361,24 +379,29 @@ mod tests {
         .build();
 
         let mut buf = Vec::new();
-        let packet_hdr = PacketHeaderBuilder { rwnd: 2, nack: 0 }.build().unwrap();
+        let packet_hdr = PacketHeaderBuilder {
+            rwnd: 2,
+            nack: Seq::from_u32(0),
+        }
+        .build()
+        .unwrap();
         buf.append(&mut packet_hdr.to_bytes());
         let ack1 = FragHeaderBuilder {
-            seq: 1,
+            seq: Seq::from_u32(1),
             cmd: FragCommand::Ack,
         }
         .build()
         .unwrap();
         buf.append(&mut ack1.to_bytes());
         let ack2 = FragHeaderBuilder {
-            seq: 3,
+            seq: Seq::from_u32(3),
             cmd: FragCommand::Ack,
         }
         .build()
         .unwrap();
         buf.append(&mut ack2.to_bytes());
         let push_hdr1 = FragHeaderBuilder {
-            seq: 99,
+            seq: Seq::from_u32(99),
             cmd: FragCommand::Push { len: 11 },
         }
         .build()
@@ -389,12 +412,13 @@ mod tests {
 
         let rdr = BufRdr::from_bytes(buf);
         let changes = download.input(rdr).unwrap();
-        assert_eq!(changes.local_next_seq_to_receive, 0);
+        assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(changes.local_receiving_queue_free_len, 3);
-        assert_eq!(changes.remote_nack, 0);
+        assert_eq!(changes.remote_nack.to_u32(), 0);
         assert_eq!(changes.remote_rwnd, 2);
         assert_eq!(changes.remote_seqs_to_ack, vec![]);
-        assert_eq!(changes.acked_local_seqs, vec![1, 3]);
+        let tmp: Vec<Seq> = vec![1, 3].iter().map(|&x| Seq::from_u32(x)).collect();
+        assert_eq!(changes.acked_local_seqs, tmp);
         assert!(download.recv().is_none());
     }
 
@@ -407,11 +431,16 @@ mod tests {
 
         {
             let mut buf = Vec::new();
-            let packet_hdr = PacketHeaderBuilder { rwnd: 2, nack: 0 }.build().unwrap();
+            let packet_hdr = PacketHeaderBuilder {
+                rwnd: 2,
+                nack: Seq::from_u32(0),
+            }
+            .build()
+            .unwrap();
             buf.append(&mut packet_hdr.to_bytes());
             {
                 let push_hdr1 = FragHeaderBuilder {
-                    seq: 1,
+                    seq: Seq::from_u32(1),
                     cmd: FragCommand::Push { len: 1 },
                 }
                 .build()
@@ -422,7 +451,7 @@ mod tests {
             }
             {
                 let push_hdr2 = FragHeaderBuilder {
-                    seq: 2,
+                    seq: Seq::from_u32(2),
                     cmd: FragCommand::Push { len: 2 },
                 }
                 .build()
@@ -434,21 +463,27 @@ mod tests {
 
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
-            assert_eq!(changes.local_next_seq_to_receive, 0);
+            assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
             assert_eq!(changes.local_receiving_queue_free_len, 1);
-            assert_eq!(changes.remote_nack, 0);
+            assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd, 2);
-            assert_eq!(changes.remote_seqs_to_ack, vec![1]);
+            let tmp: Vec<Seq> = vec![1].iter().map(|&x| Seq::from_u32(x)).collect();
+            assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
             assert!(download.recv().is_none());
         }
         {
             let mut buf = Vec::new();
-            let packet_hdr = PacketHeaderBuilder { rwnd: 2, nack: 0 }.build().unwrap();
+            let packet_hdr = PacketHeaderBuilder {
+                rwnd: 2,
+                nack: Seq::from_u32(0),
+            }
+            .build()
+            .unwrap();
             buf.append(&mut packet_hdr.to_bytes());
             {
                 let push_hdr0 = FragHeaderBuilder {
-                    seq: 0,
+                    seq: Seq::from_u32(0),
                     cmd: FragCommand::Push { len: 1 },
                 }
                 .build()
@@ -459,7 +494,7 @@ mod tests {
             }
             {
                 let push_hdr3 = FragHeaderBuilder {
-                    seq: 3,
+                    seq: Seq::from_u32(3),
                     cmd: FragCommand::Push { len: 3 },
                 }
                 .build()
@@ -471,22 +506,28 @@ mod tests {
 
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
-            assert_eq!(changes.local_next_seq_to_receive, 2);
+            assert_eq!(changes.local_next_seq_to_receive.to_u32(), 2);
             assert_eq!(changes.local_receiving_queue_free_len, 1);
-            assert_eq!(changes.remote_nack, 0);
+            assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd, 2);
-            assert_eq!(changes.remote_seqs_to_ack, vec![0, 3]);
+            let tmp: Vec<Seq> = vec![0, 3].iter().map(|&x| Seq::from_u32(x)).collect();
+            assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
             assert_eq!(download.recv().unwrap().data(), vec![0; 1]);
             assert_eq!(download.recv().unwrap().data(), vec![1; 1]);
         }
         {
             let mut buf = Vec::new();
-            let packet_hdr = PacketHeaderBuilder { rwnd: 2, nack: 0 }.build().unwrap();
+            let packet_hdr = PacketHeaderBuilder {
+                rwnd: 2,
+                nack: Seq::from_u32(0),
+            }
+            .build()
+            .unwrap();
             buf.append(&mut packet_hdr.to_bytes());
             {
                 let push_hdr2 = FragHeaderBuilder {
-                    seq: 2,
+                    seq: Seq::from_u32(2),
                     cmd: FragCommand::Push { len: 2 },
                 }
                 .build()
@@ -498,11 +539,12 @@ mod tests {
 
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
-            assert_eq!(changes.local_next_seq_to_receive, 4);
+            assert_eq!(changes.local_next_seq_to_receive.to_u32(), 4);
             assert_eq!(changes.local_receiving_queue_free_len, 2);
-            assert_eq!(changes.remote_nack, 0);
+            assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd, 2);
-            assert_eq!(changes.remote_seqs_to_ack, vec![2]);
+            let tmp: Vec<Seq> = vec![2].iter().map(|&x| Seq::from_u32(x)).collect();
+            assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
             assert_eq!(download.recv().unwrap().data(), vec![2; 2]);
             assert_eq!(download.recv().unwrap().data(), vec![3; 3]);
@@ -510,11 +552,16 @@ mod tests {
         // test out of window2
         {
             let mut buf = Vec::new();
-            let packet_hdr = PacketHeaderBuilder { rwnd: 2, nack: 0 }.build().unwrap();
+            let packet_hdr = PacketHeaderBuilder {
+                rwnd: 2,
+                nack: Seq::from_u32(0),
+            }
+            .build()
+            .unwrap();
             buf.append(&mut packet_hdr.to_bytes());
             {
                 let push_hdr0 = FragHeaderBuilder {
-                    seq: 0,
+                    seq: Seq::from_u32(0),
                     cmd: FragCommand::Push { len: 2 },
                 }
                 .build()
@@ -526,9 +573,9 @@ mod tests {
 
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
-            assert_eq!(changes.local_next_seq_to_receive, 4);
+            assert_eq!(changes.local_next_seq_to_receive.to_u32(), 4);
             assert_eq!(changes.local_receiving_queue_free_len, 2);
-            assert_eq!(changes.remote_nack, 0);
+            assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd, 2);
             assert_eq!(changes.remote_seqs_to_ack, vec![]);
             assert_eq!(changes.acked_local_seqs, vec![]);
@@ -545,12 +592,17 @@ mod tests {
 
         let mut buf = Vec::new();
         {
-            let packet_hdr = PacketHeaderBuilder { rwnd: 2, nack: 0 }.build().unwrap();
+            let packet_hdr = PacketHeaderBuilder {
+                rwnd: 2,
+                nack: Seq::from_u32(0),
+            }
+            .build()
+            .unwrap();
             buf.append(&mut packet_hdr.to_bytes());
         }
         {
             let push_hdr1 = FragHeaderBuilder {
-                seq: 0,
+                seq: Seq::from_u32(0),
                 cmd: FragCommand::Push { len: 4 },
             }
             .build()
@@ -562,11 +614,12 @@ mod tests {
         {
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
-            assert_eq!(changes.local_next_seq_to_receive, 1);
+            assert_eq!(changes.local_next_seq_to_receive.to_u32(), 1);
             assert_eq!(changes.local_receiving_queue_free_len, 3);
-            assert_eq!(changes.remote_nack, 0);
+            assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd, 2);
-            assert_eq!(changes.remote_seqs_to_ack, vec![0]);
+            let tmp: Vec<Seq> = vec![0].iter().map(|&x| Seq::from_u32(x)).collect();
+            assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
             assert_eq!(download.recv_max(1).unwrap().data(), vec![0]);
             assert_eq!(download.recv_max(2).unwrap().data(), vec![1, 2]);
