@@ -229,7 +229,7 @@ struct LocalStat {
     decoding_errors: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Stat {
     pub out_of_windows: u64,
     pub out_of_orders: u64,

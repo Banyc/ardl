@@ -3,7 +3,7 @@ use std::{
     net::UdpSocket,
     sync::{mpsc, Arc},
     thread,
-    time::{Duration, SystemTime, self},
+    time::{self, Duration, SystemTime},
 };
 
 use crate_yatcp::{
@@ -113,7 +113,7 @@ fn stat_timer(
         uploading_messaging_tx
             .send(UploadingMessaging::PrintStat)
             .unwrap();
-        thread::sleep(Duration::from_secs(1));
+        thread::sleep(Duration::from_secs(STAT_INTERVAL_S));
         downloading_messaging
             .send(DownloadingMessaging::PrintStat)
             .unwrap();
@@ -125,6 +125,7 @@ fn yatcp_uploading(
     mut upload: YatcpUpload,
     messaging: mpsc::Receiver<UploadingMessaging>,
 ) {
+    let mut old_stat = None;
     loop {
         let msg = messaging.recv().unwrap();
         match msg {
@@ -145,8 +146,16 @@ fn yatcp_uploading(
             }
             UploadingMessaging::PrintStat => {
                 let stat = upload.stat();
-                let time = SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_millis();
-                println!("{}. Upload: {:?}", time, stat);
+                if let Some(old_stat) = old_stat {
+                    if old_stat != stat {
+                        let time = SystemTime::now()
+                            .duration_since(time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis();
+                        println!("{}. Upload: {:?}", time, stat);
+                    }
+                }
+                old_stat = Some(stat);
             }
         }
     }
@@ -157,6 +166,7 @@ fn yatcp_downloading(
     messaging: mpsc::Receiver<DownloadingMessaging>,
     uploading_messaging_tx: Arc<mpsc::SyncSender<UploadingMessaging>>,
 ) {
+    let mut old_stat = None;
     loop {
         let msg = messaging.recv().unwrap();
         match msg {
@@ -187,8 +197,16 @@ fn yatcp_downloading(
             }
             DownloadingMessaging::PrintStat => {
                 let stat = download.stat();
-                let time = SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_millis();
-                println!("{}. Download: {:?}", time, stat);
+                if let Some(old_stat) = old_stat {
+                    if old_stat != stat {
+                        let time = SystemTime::now()
+                            .duration_since(time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis();
+                        println!("{}. Upload: {:?}", time, stat);
+                    }
+                }
+                old_stat = Some(stat);
             }
         }
     }

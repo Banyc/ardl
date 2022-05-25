@@ -382,7 +382,7 @@ struct LocalStat {
     retransmissions: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Stat {
     pub srtt: Option<time::Duration>,
     pub retransmissions: u64,
