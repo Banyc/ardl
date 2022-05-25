@@ -62,7 +62,9 @@ impl BufPasta {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{BufRdr, BufWtr, OwnedBufWtr};
+    use super::super::BufRdr;
+
+    use super::{BufWtr, OwnedBufWtr};
 
     use super::BufPasta;
 

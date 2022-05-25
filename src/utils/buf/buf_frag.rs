@@ -68,7 +68,7 @@ mod tests {
 
     use std::sync::Arc;
 
-    use crate::utils::{BufWtr, OwnedBufWtr};
+    use super::{BufWtr, OwnedBufWtr};
 
     use super::BufFragBuilder;
 

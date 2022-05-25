@@ -11,7 +11,7 @@ use crate::{
     utils::{self, BufPasta, BufWtr, FastRetransmissionWnd, Seq, SubBufWtr},
 };
 
-use super::SetUploadStates;
+use super::SetUploadState;
 
 const ALPHA: f64 = 1.0 / 8.0;
 const MAX_RTO_MS: u64 = 60_000;
@@ -80,7 +80,7 @@ impl SendingFrag {
 
 #[derive(Debug)]
 pub enum Error {
-    InvalidStates,
+    InvalidState,
 }
 
 impl YatcpUpload {
@@ -343,10 +343,10 @@ impl YatcpUpload {
     }
 
     #[inline]
-    pub fn set_states(&mut self, delta: SetUploadStates) -> Result<(), Error> {
+    pub fn set_state(&mut self, delta: SetUploadState) -> Result<(), Error> {
         for &acked_local_seq in &delta.acked_local_seqs {
             if acked_local_seq == delta.remote_nack {
-                return Err(Error::InvalidStates);
+                return Err(Error::InvalidState);
             }
         }
 
@@ -398,7 +398,7 @@ mod tests {
             yatcp_upload::{
                 YatcpUploadBuilder, NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
             },
-            SetUploadStates,
+            SetUploadState,
         },
     };
 
@@ -738,7 +738,7 @@ mod tests {
         assert!(is_written);
 
         for i in 0..NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT + 1 {
-            let state = SetUploadStates {
+            let state = SetUploadState {
                 remote_rwnd: 99,
                 remote_nack: Seq::from_u32(0),
                 local_next_seq_to_receive: Seq::from_u32(0),
@@ -746,7 +746,7 @@ mod tests {
                 acked_local_seqs: vec![Seq::from_u32(1)],
                 local_receiving_queue_free_len: 1,
             };
-            upload.set_states(state).unwrap();
+            upload.set_state(state).unwrap();
 
             packet.reset_data(0);
             let is_written = upload.append_packet_to_and_if_written(&mut packet);

@@ -9,7 +9,7 @@ use crate_yatcp::{
     protocols::yatcp::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
     utils::{BufRdr, BufWtr, OwnedBufWtr},
     yatcp::{
-        yatcp_download::YatcpDownload, yatcp_upload::YatcpUpload, SetUploadStates, YatcpBuilder,
+        yatcp_download::YatcpDownload, yatcp_upload::YatcpUpload, SetUploadState, YatcpBuilder,
     },
 };
 
@@ -86,7 +86,7 @@ fn yatcp_uploading(
         let msg = messaging.recv().unwrap();
         match msg {
             UploadingMessaging::SetUploadStates(x) => {
-                upload.set_states(x).unwrap();
+                upload.set_state(x).unwrap();
             }
             UploadingMessaging::Flush => {
                 let mut wtr = OwnedBufWtr::new(MTU, 0);
@@ -160,7 +160,7 @@ fn socket_recving(
 }
 
 enum UploadingMessaging {
-    SetUploadStates(SetUploadStates),
+    SetUploadStates(SetUploadState),
     Flush,
     ToSend(BufRdr, SocketAddr),
 }

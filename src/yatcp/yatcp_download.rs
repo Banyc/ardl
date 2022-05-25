@@ -8,7 +8,7 @@ use crate::{
     utils::{self, BufFrag, Seq},
 };
 
-use super::SetUploadStates;
+use super::SetUploadState;
 
 pub struct YatcpDownload {
     received_queue: VecDeque<BufFrag>,
@@ -90,9 +90,9 @@ impl YatcpDownload {
         received
     }
 
-    pub fn input(&mut self, mut rdr: utils::BufRdr) -> Result<SetUploadStates, Error> {
+    pub fn input(&mut self, mut rdr: utils::BufRdr) -> Result<SetUploadState, Error> {
         let partial_state_changes = self.handle_packet(&mut rdr)?;
-        let state_changes = SetUploadStates {
+        let state_changes = SetUploadState {
             remote_rwnd: partial_state_changes.remote_rwnd,
             remote_nack: partial_state_changes.remote_nack,
             local_next_seq_to_receive: self.local_next_seq_to_receive,

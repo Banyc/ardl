@@ -26,7 +26,7 @@ impl YatcpBuilder {
     }
 }
 
-pub struct SetUploadStates {
+pub struct SetUploadState {
     pub remote_rwnd: u16,
     pub remote_nack: Seq,
     pub local_next_seq_to_receive: Seq,
@@ -78,7 +78,7 @@ mod tests {
 
             let inflight = BufRdr::from_wtr(inflight);
             let upload2_changes = download2.input(inflight).unwrap();
-            upload2.set_states(upload2_changes).unwrap();
+            upload2.set_state(upload2_changes).unwrap();
 
             let recv2 = download2.recv().unwrap();
             assert_eq!(recv2.data(), vec![0, 1, 2]);
@@ -94,7 +94,7 @@ mod tests {
 
             let inflight = BufRdr::from_wtr(inflight);
             let upload1_changes = download1.input(inflight).unwrap();
-            upload1.set_states(upload1_changes).unwrap();
+            upload1.set_state(upload1_changes).unwrap();
         }
     }
 
@@ -133,7 +133,7 @@ mod tests {
 
             let inflight = BufRdr::from_wtr(inflight);
             let upload2_changes = download2.input(inflight).unwrap();
-            upload2.set_states(upload2_changes).unwrap();
+            upload2.set_state(upload2_changes).unwrap();
 
             let recv2 = download2.recv().unwrap();
             assert_eq!(recv2.data(), vec![0, 1, 2]);

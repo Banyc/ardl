@@ -89,7 +89,7 @@ impl BufRdr {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{BufWtr, OwnedBufWtr};
+    use super::{BufWtr, OwnedBufWtr};
 
     use super::BufRdr;
 
