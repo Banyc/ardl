@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, VecDeque},
-    time::{self, Duration, Instant},
+    time::{self, Duration},
 };
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
     utils::{self, BufPasta, BufWtr, FastRetransmissionWnd, Seq, SubBufWtr},
 };
 
-use super::SetUploadState;
+use super::{sending_frag::SendingFrag, SetUploadState};
 
 const ALPHA: f64 = 1.0 / 8.0;
 const MAX_RTO_MS: u64 = 60_000;
@@ -57,6 +57,8 @@ impl YatcpUploadBuilder {
             stat: LocalStat {
                 srtt: None,
                 retransmissions: 0,
+                rto_hits: 0,
+                fast_retransmissions: 0,
             },
             fast_retransmission_wnd: FastRetransmissionWnd::new(
                 NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
@@ -64,17 +66,6 @@ impl YatcpUploadBuilder {
         };
         this.check_rep();
         this
-    }
-}
-
-struct SendingFrag {
-    body: BufPasta,
-    last_seen: time::Instant,
-}
-
-impl SendingFrag {
-    pub fn is_timeout(&self, timeout: &time::Duration) -> bool {
-        *timeout <= self.last_seen.elapsed()
     }
 }
 
@@ -95,6 +86,8 @@ impl YatcpUpload {
         Stat {
             srtt: self.stat.srtt,
             retransmissions: self.stat.retransmissions,
+            rto_hits: self.stat.rto_hits,
+            fast_retransmissions: self.stat.fast_retransmissions,
         }
     }
 
@@ -174,7 +167,7 @@ impl YatcpUpload {
                 assert!(!wtr.is_empty());
                 return;
             }
-            if !(frag.body.len() + PUSH_HDR_LEN <= wtr.back_len()) {
+            if !(frag.body().len() + PUSH_HDR_LEN <= wtr.back_len()) {
                 continue;
             }
             if !(frag.is_timeout(&rto)
@@ -187,7 +180,7 @@ impl YatcpUpload {
             let hdr = FragHeaderBuilder {
                 seq,
                 cmd: FragCommand::Push {
-                    len: frag.body.len() as u32,
+                    len: frag.body().len() as u32,
                 },
             }
             .build()
@@ -195,10 +188,13 @@ impl YatcpUpload {
             let bytes = hdr.to_bytes();
             assert_eq!(bytes.len(), PUSH_HDR_LEN);
             wtr.append(&bytes).unwrap();
-            frag.body.append_to(wtr).unwrap();
-            frag.last_seen = Instant::now(); // test case: `test_rto_once`
+            frag.body().append_to(wtr).unwrap();
+            frag.to_retransmit(); // test case: `test_rto_once`
             if self.fast_retransmission_wnd.contains(seq) {
                 self.fast_retransmission_wnd.retransmitted(seq); // test case: `test_fast_retransmit`
+                self.stat.fast_retransmissions += 1;
+            } else {
+                self.stat.rto_hits += 1;
             }
             self.stat.retransmissions += 1;
         }
@@ -247,15 +243,12 @@ impl YatcpUpload {
 
             let seq = self.next_seq_to_send;
             self.next_seq_to_send.increment();
-            let frag = SendingFrag {
-                body: frag_body,
-                last_seen: time::Instant::now(),
-            };
+            let frag = SendingFrag::new(frag_body);
             // write the frag to output buffer
             let hdr = FragHeaderBuilder {
                 seq,
                 cmd: FragCommand::Push {
-                    len: frag.body.len() as u32,
+                    len: frag.body().len() as u32,
                 },
             }
             .build()
@@ -263,7 +256,7 @@ impl YatcpUpload {
             let bytes = hdr.to_bytes();
             assert_eq!(bytes.len(), PUSH_HDR_LEN);
             wtr.append(&bytes).unwrap();
-            frag.body.append_to(wtr).unwrap();
+            frag.body().append_to(wtr).unwrap();
             // register the frag to sending_queue
             self.sending_queue.insert(seq, frag);
         }
@@ -308,15 +301,18 @@ impl YatcpUpload {
     fn set_acked_local_seq(&mut self, acked_local_seq: Seq) {
         // remove the selected sequence
         if let Some(frag) = self.sending_queue.remove(&acked_local_seq) {
-            // set smooth RTT
-            let frag_rtt = frag.last_seen.duration_since(Instant::now());
-            match self.stat.srtt {
-                Some(srtt) => {
-                    let new_srtt = srtt.mul_f64(1.0 - ALPHA) + frag_rtt.mul_f64(ALPHA);
-                    self.stat.srtt = Some(new_srtt);
+            if !frag.is_retransmitted() {
+                // set smooth RTT
+                let frag_rtt = frag.since_last_sent();
+                match self.stat.srtt {
+                    Some(srtt) => {
+                        let new_srtt = srtt.mul_f64(1.0 - ALPHA) + frag_rtt.mul_f64(ALPHA);
+                        self.stat.srtt = Some(new_srtt);
+                    }
+                    None => self.stat.srtt = Some(frag_rtt),
                 }
-                None => self.stat.srtt = Some(frag_rtt),
             }
+            // else, `last_seen` might just been modified, letting `srtt` become smaller
         }
         self.check_rep();
     }
@@ -352,7 +348,6 @@ impl YatcpUpload {
 
         self.set_remote_rwnd(delta.remote_rwnd);
         self.set_local_next_seq_to_receive(delta.local_next_seq_to_receive);
-        self.remove_sending_before(delta.remote_nack);
         self.set_receiving_queue_free_len(delta.local_receiving_queue_free_len);
         let mut max_acked_local_seq = None;
         for acked_local_seq in delta.acked_local_seqs {
@@ -362,7 +357,8 @@ impl YatcpUpload {
                 None => acked_local_seq,
             });
         }
-        // to retransmit all sequences before the largest out-of-order sequence
+        self.remove_sending_before(delta.remote_nack); // must after `set_acked_local_seq`s
+                                                       // to retransmit all sequences before the largest out-of-order sequence
         if let Some(x) = max_acked_local_seq {
             if delta.remote_nack < x {
                 self.fast_retransmission_wnd
@@ -380,12 +376,16 @@ impl YatcpUpload {
 struct LocalStat {
     srtt: Option<time::Duration>,
     retransmissions: u64,
+    rto_hits: u64,
+    fast_retransmissions: u64,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Stat {
     pub srtt: Option<time::Duration>,
     pub retransmissions: u64,
+    pub rto_hits: u64,
+    pub fast_retransmissions: u64,
 }
 
 #[cfg(test)]

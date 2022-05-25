@@ -5,6 +5,7 @@ use self::{
     yatcp_upload::{YatcpUpload, YatcpUploadBuilder},
 };
 
+mod sending_frag;
 pub mod yatcp_download;
 pub mod yatcp_upload;
 
