@@ -17,7 +17,7 @@ use crate_yatcp::{
 // const MTU: usize = 512;
 const MTU: usize = PACKET_HDR_LEN + PUSH_HDR_LEN + 1;
 const FLUSH_INTERVAL_MS: u64 = 10;
-const STAT_INTERVAL_S: u64 = 10;
+const STAT_INTERVAL_S: u64 = 1;
 const LISTEN_ADDR: &str = "0.0.0.0:19479";
 const MAX_LOCAL_RWND_LEN: usize = 2;
 
@@ -203,7 +203,7 @@ fn yatcp_downloading(
                             .duration_since(time::UNIX_EPOCH)
                             .unwrap()
                             .as_millis();
-                        println!("{}. Upload: {:?}", time, stat);
+                        println!("{}. Download: {:?}", time, stat);
                     }
                 }
                 old_stat = Some(stat);
