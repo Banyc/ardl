@@ -3,7 +3,7 @@ use std::{
     net::UdpSocket,
     sync::{mpsc, Arc},
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, self},
 };
 
 use crate_yatcp::{
@@ -17,6 +17,7 @@ use crate_yatcp::{
 // const MTU: usize = 512;
 const MTU: usize = PACKET_HDR_LEN + PUSH_HDR_LEN + 1;
 const FLUSH_INTERVAL_MS: u64 = 10;
+const STAT_INTERVAL_S: u64 = 10;
 const LISTEN_ADDR: &str = "0.0.0.0:19479";
 const MAX_LOCAL_RWND_LEN: usize = 2;
 
@@ -41,27 +42,42 @@ fn main() {
 
     // spawn threads
     let mut threads = Vec::new();
-    let uploading_messaging_tx1 = Arc::clone(&uploading_messaging_tx);
-    let thread = thread::spawn(move || {
-        yatcp_downloading(
-            yatcp_download,
-            downloading_messaging_rx,
-            uploading_messaging_tx1,
-        )
-    });
-    threads.push(thread);
-    let connection1 = Arc::clone(&connection);
-    let thread = thread::spawn(move || {
-        yatcp_uploading(connection1, yatcp_upload, uploading_messaging_rx);
-    });
-    threads.push(thread);
-    let uploading_messaging_tx1 = Arc::clone(&uploading_messaging_tx);
-    let thread = thread::spawn(move || timer(uploading_messaging_tx1));
-    threads.push(thread);
-    let connection1 = Arc::clone(&connection);
-    let downloading_messaging_tx1 = Arc::clone(&downloading_messaging_tx);
-    let thread = thread::spawn(move || socket_recving(connection1, downloading_messaging_tx1));
-    threads.push(thread);
+    {
+        let uploading_messaging_tx1 = Arc::clone(&uploading_messaging_tx);
+        let thread = thread::spawn(move || {
+            yatcp_downloading(
+                yatcp_download,
+                downloading_messaging_rx,
+                uploading_messaging_tx1,
+            )
+        });
+        threads.push(thread);
+    }
+    {
+        let connection1 = Arc::clone(&connection);
+        let thread = thread::spawn(move || {
+            yatcp_uploading(connection1, yatcp_upload, uploading_messaging_rx);
+        });
+        threads.push(thread);
+    }
+    {
+        let uploading_messaging_tx1 = Arc::clone(&uploading_messaging_tx);
+        let thread = thread::spawn(move || flush_timer(uploading_messaging_tx1));
+        threads.push(thread);
+    }
+    {
+        let uploading_messaging_tx1 = Arc::clone(&uploading_messaging_tx);
+        let downloading_messaging_tx1 = Arc::clone(&downloading_messaging_tx);
+        let thread =
+            thread::spawn(move || stat_timer(uploading_messaging_tx1, downloading_messaging_tx1));
+        threads.push(thread);
+    }
+    {
+        let connection1 = Arc::clone(&connection);
+        let downloading_messaging_tx1 = Arc::clone(&downloading_messaging_tx);
+        let thread = thread::spawn(move || socket_recving(connection1, downloading_messaging_tx1));
+        threads.push(thread);
+    }
 
     // stdin
     loop {
@@ -79,11 +95,27 @@ fn main() {
     }
 }
 
-fn timer(uploading_messaging_tx: Arc<mpsc::SyncSender<UploadingMessaging>>) {
+fn flush_timer(uploading_messaging_tx: Arc<mpsc::SyncSender<UploadingMessaging>>) {
     loop {
         thread::sleep(Duration::from_millis(FLUSH_INTERVAL_MS));
         uploading_messaging_tx
             .send(UploadingMessaging::Flush)
+            .unwrap();
+    }
+}
+
+fn stat_timer(
+    uploading_messaging_tx: Arc<mpsc::SyncSender<UploadingMessaging>>,
+    downloading_messaging: Arc<mpsc::SyncSender<DownloadingMessaging>>,
+) {
+    loop {
+        thread::sleep(Duration::from_secs(STAT_INTERVAL_S));
+        uploading_messaging_tx
+            .send(UploadingMessaging::PrintStat)
+            .unwrap();
+        thread::sleep(Duration::from_secs(1));
+        downloading_messaging
+            .send(DownloadingMessaging::PrintStat)
             .unwrap();
     }
 }
@@ -110,6 +142,11 @@ fn yatcp_uploading(
             }
             UploadingMessaging::ToSend(rdr) => {
                 upload.to_send(rdr);
+            }
+            UploadingMessaging::PrintStat => {
+                let stat = upload.stat();
+                let time = SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_millis();
+                println!("{}. Upload: {:?}", time, stat);
             }
         }
     }
@@ -148,6 +185,11 @@ fn yatcp_downloading(
                     println!("{}, {:X?}", String::from_utf8_lossy(&buf), buf);
                 }
             }
+            DownloadingMessaging::PrintStat => {
+                let stat = download.stat();
+                let time = SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_millis();
+                println!("{}. Download: {:?}", time, stat);
+            }
         }
     }
 }
@@ -172,8 +214,10 @@ enum UploadingMessaging {
     SetUploadStates(SetUploadState),
     Flush,
     ToSend(BufRdr),
+    PrintStat,
 }
 
 enum DownloadingMessaging {
     ConnRecv(OwnedBufWtr),
+    PrintStat,
 }
