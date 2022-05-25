@@ -1,10 +1,10 @@
-use super::DuplicateCount;
+use super::ConsecutiveDuplicateCount;
 
 pub struct DuplicateThreshold<T>
 where
     T: PartialEq,
 {
-    duplicate: DuplicateCount<T>,
+    duplicate: ConsecutiveDuplicateCount<T>,
     dup_threshold_to_activate: usize, // activation: inclusive
 }
 
@@ -14,7 +14,7 @@ where
 {
     pub fn new(default_value: T, dup_limit_to_activate: usize) -> Self {
         DuplicateThreshold {
-            duplicate: DuplicateCount::new(default_value),
+            duplicate: ConsecutiveDuplicateCount::new(default_value),
             dup_threshold_to_activate: dup_limit_to_activate,
         }
     }
