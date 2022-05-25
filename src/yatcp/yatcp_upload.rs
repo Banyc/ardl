@@ -15,7 +15,7 @@ use super::{sending_frag::SendingFrag, SetUploadState};
 
 const ALPHA: f64 = 1.0 / 8.0;
 const MAX_RTO_MS: u64 = 60_000;
-const DEFAULT_RTO_MS: u64 = 200;
+const DEFAULT_RTO_MS: u64 = 3_000; // make it bigger to avoid RTO floods
 const MIN_RTO_MS: u64 = 100;
 const RATIO_RTT_RTO: f64 = 1.5;
 const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 0;
