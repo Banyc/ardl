@@ -99,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn test_retranmission() {
+    fn test_rto() {
         let (mut upload1, mut _download1) = YatcpBuilder {
             max_local_receiving_queue_len: 2,
         }

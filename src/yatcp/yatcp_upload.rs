@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, VecDeque},
-    ops::Range,
     time::{self, Duration, Instant},
 };
 
@@ -9,7 +8,7 @@ use crate::{
         frag_hdr::{FragCommand, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN},
         packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
-    utils::{self, BufPasta, BufWtr, Seq, SubBufWtr},
+    utils::{self, BufPasta, BufWtr, FastRetransmissionWnd, Seq, SubBufWtr},
 };
 
 use super::SetUploadStates;
@@ -19,6 +18,7 @@ const MAX_RTO_MS: u64 = 60_000;
 const DEFAULT_RTO_MS: u64 = 200;
 const MIN_RTO_MS: u64 = 100;
 const RATIO_RTT_RTO: f64 = 1.5;
+const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 0;
 static MAX_RTO: time::Duration = Duration::from_millis(MAX_RTO_MS);
 static DEFAULT_RTO: time::Duration = Duration::from_millis(DEFAULT_RTO_MS);
 static MIN_RTO: time::Duration = Duration::from_millis(MIN_RTO_MS);
@@ -58,7 +58,9 @@ impl YatcpUploadBuilder {
                 srtt: None,
                 retransmissions: 0,
             },
-            fast_retransmission_wnd: FastRetransmissionWnd::new(),
+            fast_retransmission_wnd: FastRetransmissionWnd::new(
+                NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
+            ),
         };
         this.check_rep();
         this
@@ -178,7 +180,7 @@ impl YatcpUpload {
             if !(frag.is_timeout(&rto)
                 // fast retransmit
                 // TODO: test cases
-                || self.fast_retransmission_wnd.contains(seq) && frag.is_timeout(&MIN_RTO))
+                || self.fast_retransmission_wnd.contains(seq))
             {
                 continue;
             }
@@ -195,7 +197,9 @@ impl YatcpUpload {
             wtr.append(&bytes).unwrap();
             frag.body.append_to(wtr).unwrap();
             frag.last_seen = Instant::now(); // test case: `test_rto_once`
-            self.fast_retransmission_wnd.retransmitted(seq); // TODO: test cases
+            if self.fast_retransmission_wnd.contains(seq) {
+                self.fast_retransmission_wnd.retransmitted(seq); // test case: `test_fast_retransmit`
+            }
             self.stat.retransmissions += 1;
         }
 
@@ -362,7 +366,7 @@ impl YatcpUpload {
         if let Some(x) = max_acked_local_seq {
             if delta.remote_nack < x {
                 self.fast_retransmission_wnd
-                    .set_boundaries(delta.remote_nack..x);
+                    .try_set_boundaries(delta.remote_nack..x);
             }
         }
 
@@ -383,54 +387,6 @@ pub struct Stat {
     pub retransmissions: u64,
 }
 
-pub struct FastRetransmissionWnd {
-    start: Seq,
-    end: Seq, // exclusive
-}
-
-impl FastRetransmissionWnd {
-    fn check_rep(&self) {
-        assert!(self.start <= self.end);
-    }
-
-    pub fn new() -> Self {
-        let this = FastRetransmissionWnd {
-            start: Seq::from_u32(0),
-            end: Seq::from_u32(0),
-        };
-        this.check_rep();
-        this
-    }
-
-    pub fn contains(&self, seq: Seq) -> bool {
-        self.start <= seq && seq < self.end
-    }
-
-    pub fn is_not_retransmitted(&self, seq: Seq) -> bool {
-        self.end <= seq
-    }
-
-    pub fn is_retransmitted(&self, seq: Seq) -> bool {
-        seq < self.start
-    }
-
-    pub fn retransmitted(&mut self, seq: Seq) {
-        if !self.contains(seq) {
-            return;
-        }
-        assert!(self.contains(seq));
-        self.start = seq.add_u32(1);
-        self.check_rep();
-    }
-
-    pub fn set_boundaries(&mut self, range: Range<Seq>) {
-        assert!(range.start <= range.end);
-        self.start = range.start;
-        self.end = range.end;
-        self.check_rep();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::thread;
@@ -438,7 +394,12 @@ mod tests {
     use crate::{
         protocols::yatcp::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
         utils::{BufRdr, BufWtr, OwnedBufWtr, Seq},
-        yatcp::yatcp_upload::YatcpUploadBuilder,
+        yatcp::{
+            yatcp_upload::{
+                YatcpUploadBuilder, NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
+            },
+            SetUploadStates,
+        },
     };
 
     const MTU: usize = 512;
@@ -748,5 +709,53 @@ mod tests {
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         // the fragment doesn't timeout
         assert!(!is_written);
+    }
+
+    #[test]
+    fn test_fast_retransmit() {
+        let mut upload = YatcpUploadBuilder {
+            local_receiving_queue_len: 0,
+        }
+        .build();
+        upload.set_remote_rwnd(2);
+
+        let origin1 = vec![0, 1, 2];
+        {
+            let rdr = BufRdr::from_bytes(origin1);
+            upload.to_send(rdr);
+        }
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        assert!(is_written);
+
+        let origin2 = vec![3];
+        {
+            let rdr = BufRdr::from_bytes(origin2);
+            upload.to_send(rdr);
+        }
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        assert!(is_written);
+
+        for i in 0..NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT + 1 {
+            let state = SetUploadStates {
+                remote_rwnd: 99,
+                remote_nack: Seq::from_u32(0),
+                local_next_seq_to_receive: Seq::from_u32(0),
+                remote_seqs_to_ack: vec![],
+                acked_local_seqs: vec![Seq::from_u32(1)],
+                local_receiving_queue_free_len: 1,
+            };
+            upload.set_states(state).unwrap();
+
+            packet.reset_data(0);
+            let is_written = upload.append_packet_to_and_if_written(&mut packet);
+
+            if i == NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT {
+                assert!(is_written);
+            } else {
+                assert!(!is_written);
+            }
+        }
     }
 }
