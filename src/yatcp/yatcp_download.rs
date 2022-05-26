@@ -1,30 +1,28 @@
-use std::collections::VecDeque;
-
 use crate::{
     protocols::yatcp::{
         frag_hdr::{FragCommand, FragHeader},
         packet_hdr::PacketHeader,
     },
-    utils::{self, BufFrag, Rwnd, Seq},
+    utils::{self, BufFrag, RecvBuf, Seq, SeqLocationToRwnd},
 };
 
 use super::SetUploadState;
 
 pub struct YatcpDownload {
-    received_queue: VecDeque<BufFrag>,
-    receiving_queue: Rwnd<BufFrag>,
+    recv_buf: RecvBuf<BufFrag>,
+    leftover: Option<BufFrag>,
     stat: LocalStat,
 }
 
 pub struct YatcpDownloadBuilder {
-    pub max_local_receiving_queue_len: usize,
+    pub recv_buf_len: usize,
 }
 
 impl YatcpDownloadBuilder {
     pub fn build(self) -> YatcpDownload {
         let this = YatcpDownload {
-            received_queue: VecDeque::new(),
-            receiving_queue: Rwnd::new(self.max_local_receiving_queue_len),
+            recv_buf: RecvBuf::new(self.recv_buf_len),
+            leftover: None,
             stat: LocalStat {
                 early_pushes: 0,
                 late_pushes: 0,
@@ -47,13 +45,7 @@ pub enum Error {
 
 impl YatcpDownload {
     #[inline]
-    fn check_rep(&self) {
-        assert!(self.receiving_queue.max_len() <= u16::MAX as usize);
-        for (&seq, _) in self.receiving_queue.wnd() {
-            assert!(self.receiving_queue.next_seq_to_receive() < seq);
-            break;
-        }
-    }
+    fn check_rep(&self) {}
 
     pub fn stat(&self) -> Stat {
         Stat {
@@ -61,7 +53,7 @@ impl YatcpDownload {
             late_pushes: self.stat.late_pushes,
             out_of_orders: self.stat.out_of_orders,
             decoding_errors: self.stat.decoding_errors,
-            next_seq_to_receive: self.receiving_queue.next_seq_to_receive(),
+            next_seq_to_receive: self.recv_buf.next_seq_to_receive(),
             packets: self.stat.packets,
             pushes: self.stat.pushes,
             acks: self.stat.acks,
@@ -69,27 +61,34 @@ impl YatcpDownload {
     }
 
     pub fn recv(&mut self) -> Option<BufFrag> {
-        let received = self.received_queue.pop_front();
+        let received = self.recv_buf.pop_front();
         self.check_rep();
         received
     }
 
     pub fn recv_max(&mut self, max_len: usize) -> Option<BufFrag> {
-        let received = match self.received_queue.pop_front() {
-            Some(x) => {
-                if x.len() > max_len {
-                    let slice_front = x.slice(0..max_len).unwrap();
-                    let slice_end = x.slice(max_len..x.len()).unwrap();
-                    self.received_queue.push_front(slice_end);
-                    Some(slice_front)
-                } else {
-                    Some(x)
-                }
+        let leftover = self.leftover.take();
+        let frag = if let Some(frag) = leftover {
+            frag
+        } else {
+            if let Some(frag) = self.recv_buf.pop_front() {
+                frag
+            } else {
+                return None;
             }
-            None => None,
         };
+
+        let final_frag = if frag.len() > max_len {
+            let slice_front = frag.slice(0..max_len).unwrap();
+            let slice_end = frag.slice(max_len..frag.len()).unwrap();
+            self.leftover = Some(slice_end);
+            Some(slice_front)
+        } else {
+            Some(frag)
+        };
+
         self.check_rep();
-        received
+        final_frag
     }
 
     pub fn input(&mut self, mut rdr: utils::BufRdr) -> Result<SetUploadState, Error> {
@@ -97,10 +96,10 @@ impl YatcpDownload {
         let state_changes = SetUploadState {
             remote_rwnd: partial_state_changes.remote_rwnd,
             remote_nack: partial_state_changes.remote_nack,
-            local_next_seq_to_receive: self.receiving_queue.next_seq_to_receive(),
+            local_next_seq_to_receive: self.recv_buf.next_seq_to_receive(),
             remote_seqs_to_ack: partial_state_changes.frags.remote_seqs_to_ack,
             acked_local_seqs: partial_state_changes.frags.acked_local_seqs,
-            local_receiving_queue_free_len: self.receiving_queue.free_len(),
+            local_rwnd_capacity: self.recv_buf.rwnd_capacity(),
         };
         Ok(state_changes)
     }
@@ -170,34 +169,26 @@ impl YatcpDownload {
                         }
                     };
                     // if out of rwnd
-                    match self.receiving_queue.location(hdr.seq()) {
-                        utils::SeqLocationToRwnd::InRecvWindow => {
+                    let location = self.recv_buf.insert(hdr.seq(), body);
+                    match location {
+                        SeqLocationToRwnd::InRecvWindow => {
                             // schedule uploader to ack this seq
                             remote_seqs_to_ack.push(hdr.seq());
 
-                            // skip inserting this consecutive fragment to rwnd
-                            // hot path
-                            if let Some(body) =
-                                self.receiving_queue.insert_then_pop_next(hdr.seq(), body)
-                            {
-                                self.received_queue.push_back(body);
-                            } else {
-                                self.stat.out_of_orders += 1;
-                            }
-
-                            // pop consecutive fragments from the rwnd to the ready queue
-                            while let Some(frag) = self.receiving_queue.pop_next() {
-                                self.received_queue.push_back(frag);
-                            }
+                            self.stat.out_of_orders += 1;
                         }
-                        utils::SeqLocationToRwnd::TooLate => {
+                        SeqLocationToRwnd::AtRecvWindowStart => {
+                            // schedule uploader to ack this seq
+                            remote_seqs_to_ack.push(hdr.seq());
+                        }
+                        SeqLocationToRwnd::TooLate => {
                             // schedule uploader to ack this seq
                             remote_seqs_to_ack.push(hdr.seq());
 
                             self.stat.late_pushes += 1;
                             // drop the fragment
                         }
-                        utils::SeqLocationToRwnd::TooEarly => {
+                        SeqLocationToRwnd::TooEarly => {
                             self.stat.early_pushes += 1;
                             // drop the fragment
                         }
@@ -265,10 +256,7 @@ mod tests {
 
     #[test]
     fn test_empty() {
-        let mut download = YatcpDownloadBuilder {
-            max_local_receiving_queue_len: 3,
-        }
-        .build();
+        let mut download = YatcpDownloadBuilder { recv_buf_len: 3 }.build();
 
         let origin1 = vec![];
         let rdr = BufRdr::from_bytes(origin1);
@@ -278,10 +266,7 @@ mod tests {
 
     #[test]
     fn test_few_1() {
-        let mut download = YatcpDownloadBuilder {
-            max_local_receiving_queue_len: 3,
-        }
-        .build();
+        let mut download = YatcpDownloadBuilder { recv_buf_len: 3 }.build();
 
         let mut buf = Vec::new();
         let packet_hdr = PacketHeaderBuilder {
@@ -301,10 +286,12 @@ mod tests {
         buf.append(&mut push_hdr1.to_bytes());
         buf.append(&mut push_body1);
 
+        // [packet_header] [push_hdr seq(0)] [11]
+
         let rdr = BufRdr::from_bytes(buf);
         let changes = download.input(rdr).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 1);
-        assert_eq!(changes.local_receiving_queue_free_len, 3);
+        assert_eq!(changes.local_rwnd_capacity, 2);
         assert_eq!(changes.remote_nack.to_u32(), 0);
         assert_eq!(changes.remote_rwnd, 2);
         let tmp: Vec<Seq> = vec![0].iter().map(|&x| Seq::from_u32(x)).collect();
@@ -315,10 +302,7 @@ mod tests {
 
     #[test]
     fn test_out_of_order() {
-        let mut download = YatcpDownloadBuilder {
-            max_local_receiving_queue_len: 3,
-        }
-        .build();
+        let mut download = YatcpDownloadBuilder { recv_buf_len: 3 }.build();
 
         let mut buf = Vec::new();
         let packet_hdr = PacketHeaderBuilder {
@@ -338,10 +322,12 @@ mod tests {
         buf.append(&mut push_hdr1.to_bytes());
         buf.append(&mut push_body1);
 
+        // [packet_header] [push_hdr seq(1)] [11]
+
         let rdr = BufRdr::from_bytes(buf);
         let changes = download.input(rdr).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
-        assert_eq!(changes.local_receiving_queue_free_len, 2);
+        assert_eq!(changes.local_rwnd_capacity, 3);
         assert_eq!(changes.remote_nack.to_u32(), 0);
         assert_eq!(changes.remote_rwnd, 2);
         let tmp: Vec<Seq> = vec![1].iter().map(|&x| Seq::from_u32(x)).collect();
@@ -352,10 +338,7 @@ mod tests {
 
     #[test]
     fn test_out_of_window1() {
-        let mut download = YatcpDownloadBuilder {
-            max_local_receiving_queue_len: 3,
-        }
-        .build();
+        let mut download = YatcpDownloadBuilder { recv_buf_len: 3 }.build();
 
         let mut buf = Vec::new();
         let packet_hdr = PacketHeaderBuilder {
@@ -378,7 +361,7 @@ mod tests {
         let rdr = BufRdr::from_bytes(buf);
         let changes = download.input(rdr).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
-        assert_eq!(changes.local_receiving_queue_free_len, 3);
+        assert_eq!(changes.local_rwnd_capacity, 3);
         assert_eq!(changes.remote_nack.to_u32(), 0);
         assert_eq!(changes.remote_rwnd, 2);
         assert_eq!(changes.remote_seqs_to_ack, vec![]);
@@ -388,10 +371,7 @@ mod tests {
 
     #[test]
     fn test_ack() {
-        let mut download = YatcpDownloadBuilder {
-            max_local_receiving_queue_len: 3,
-        }
-        .build();
+        let mut download = YatcpDownloadBuilder { recv_buf_len: 3 }.build();
 
         let mut buf = Vec::new();
         let packet_hdr = PacketHeaderBuilder {
@@ -428,7 +408,7 @@ mod tests {
         let rdr = BufRdr::from_bytes(buf);
         let changes = download.input(rdr).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
-        assert_eq!(changes.local_receiving_queue_free_len, 3);
+        assert_eq!(changes.local_rwnd_capacity, 3);
         assert_eq!(changes.remote_nack.to_u32(), 0);
         assert_eq!(changes.remote_rwnd, 2);
         assert_eq!(changes.remote_seqs_to_ack, vec![]);
@@ -439,10 +419,7 @@ mod tests {
 
     #[test]
     fn test_rwnd_proceeding() {
-        let mut download = YatcpDownloadBuilder {
-            max_local_receiving_queue_len: 2,
-        }
-        .build();
+        let mut download = YatcpDownloadBuilder { recv_buf_len: 2 }.build();
 
         {
             let mut buf = Vec::new();
@@ -476,10 +453,12 @@ mod tests {
                 buf.append(&mut push_body2);
             }
 
+            // [packet_header] [push_hdr seq(1)] [1] [push_hdr seq(2)] [2]
+
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
-            assert_eq!(changes.local_receiving_queue_free_len, 1);
+            assert_eq!(changes.local_rwnd_capacity, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd, 2);
             let tmp: Vec<Seq> = vec![1].iter().map(|&x| Seq::from_u32(x)).collect();
@@ -519,13 +498,15 @@ mod tests {
                 buf.append(&mut push_body3);
             }
 
+            // [packet_header] [push_hdr seq(0)] [1] [push_hdr seq(3)] [3]
+
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 2);
-            assert_eq!(changes.local_receiving_queue_free_len, 1);
+            assert_eq!(changes.local_rwnd_capacity, 0);
             assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd, 2);
-            let tmp: Vec<Seq> = vec![0, 3].iter().map(|&x| Seq::from_u32(x)).collect();
+            let tmp: Vec<Seq> = vec![0].iter().map(|&x| Seq::from_u32(x)).collect();
             assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
             assert_eq!(download.recv().unwrap().data(), vec![0; 1]);
@@ -552,17 +533,19 @@ mod tests {
                 buf.append(&mut push_body2);
             }
 
+            // [packet_header] [push_hdr seq(2)] [2]
+
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
-            assert_eq!(changes.local_next_seq_to_receive.to_u32(), 4);
-            assert_eq!(changes.local_receiving_queue_free_len, 2);
+            assert_eq!(changes.local_next_seq_to_receive.to_u32(), 3);
+            assert_eq!(changes.local_rwnd_capacity, 1);
             assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd, 2);
             let tmp: Vec<Seq> = vec![2].iter().map(|&x| Seq::from_u32(x)).collect();
             assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
             assert_eq!(download.recv().unwrap().data(), vec![2; 2]);
-            assert_eq!(download.recv().unwrap().data(), vec![3; 3]);
+            assert!(download.recv().is_none());
         }
         // test out of window2
         {
@@ -586,10 +569,12 @@ mod tests {
                 buf.append(&mut push_body0);
             }
 
+            // [packet_header] [push_hdr seq(0)] [2]
+
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
-            assert_eq!(changes.local_next_seq_to_receive.to_u32(), 4);
-            assert_eq!(changes.local_receiving_queue_free_len, 2);
+            assert_eq!(changes.local_next_seq_to_receive.to_u32(), 3);
+            assert_eq!(changes.local_rwnd_capacity, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd, 2);
             assert_eq!(changes.remote_seqs_to_ack, vec![Seq::from_u32(0)]);
@@ -600,10 +585,7 @@ mod tests {
 
     #[test]
     fn test_recv_max() {
-        let mut download = YatcpDownloadBuilder {
-            max_local_receiving_queue_len: 3,
-        }
-        .build();
+        let mut download = YatcpDownloadBuilder { recv_buf_len: 3 }.build();
 
         let mut buf = Vec::new();
         {
@@ -626,11 +608,14 @@ mod tests {
             buf.append(&mut push_hdr1.to_bytes());
             buf.append(&mut push_body1);
         }
+
+        // [packet_header] [push_hdr seq(0)] [4]
+
         {
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 1);
-            assert_eq!(changes.local_receiving_queue_free_len, 3);
+            assert_eq!(changes.local_rwnd_capacity, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd, 2);
             let tmp: Vec<Seq> = vec![0].iter().map(|&x| Seq::from_u32(x)).collect();

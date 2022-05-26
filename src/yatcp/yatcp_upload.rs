@@ -29,7 +29,7 @@ pub struct YatcpUpload {
     next_seq_to_send: Seq,
 
     // modified by setters
-    local_receiving_queue_free_len: usize,
+    local_rwnd_capacity: usize,
     local_next_seq_to_receive: Seq,
     remote_rwnd: u16,
     fast_retransmission_wnd: FastRetransmissionWnd,
@@ -56,7 +56,7 @@ impl YatcpUploadBuilder {
             to_send_queue: VecDeque::new(),
             sending_queue: BTreeMap::new(),
             to_ack_queue: VecDeque::new(),
-            local_receiving_queue_free_len: self.local_receiving_queue_len,
+            local_rwnd_capacity: self.local_receiving_queue_len,
             local_next_seq_to_receive: Seq::from_u32(0),
             next_seq_to_send: Seq::from_u32(0),
             remote_rwnd: 0,
@@ -133,7 +133,7 @@ impl YatcpUpload {
         if is_written {
             // packet header
             let hdr = PacketHeaderBuilder {
-                rwnd: self.local_receiving_queue_free_len as u16,
+                rwnd: self.local_rwnd_capacity as u16,
                 nack: self.local_next_seq_to_receive,
             }
             .build()
@@ -362,8 +362,8 @@ impl YatcpUpload {
     }
 
     #[inline]
-    fn set_receiving_queue_free_len(&mut self, local_receiving_queue_free_len: usize) {
-        self.local_receiving_queue_free_len = local_receiving_queue_free_len;
+    fn set_rwnd_capacity(&mut self, local_rwnd_capacity: usize) {
+        self.local_rwnd_capacity = local_rwnd_capacity;
     }
 
     #[inline]
@@ -376,7 +376,7 @@ impl YatcpUpload {
 
         self.set_remote_rwnd(delta.remote_rwnd);
         self.set_local_next_seq_to_receive(delta.local_next_seq_to_receive);
-        self.set_receiving_queue_free_len(delta.local_receiving_queue_free_len);
+        self.set_rwnd_capacity(delta.local_rwnd_capacity);
         let mut max_acked_local_seq = None;
         for acked_local_seq in delta.acked_local_seqs {
             self.set_acked_local_seq(acked_local_seq);
@@ -756,7 +756,7 @@ mod tests {
             local_next_seq_to_receive: Seq::from_u32(0),
             remote_seqs_to_ack: vec![],
             acked_local_seqs: vec![Seq::from_u32(1)],
-            local_receiving_queue_free_len: 1,
+            local_rwnd_capacity: 1,
         };
         upload.set_state(state).unwrap();
 
@@ -802,7 +802,7 @@ mod tests {
             local_next_seq_to_receive: Seq::from_u32(0),
             remote_seqs_to_ack: vec![],
             acked_local_seqs: vec![Seq::from_u32(0)],
-            local_receiving_queue_free_len: 1,
+            local_rwnd_capacity: 1,
         };
         upload.set_state(state).unwrap();
 
@@ -863,7 +863,7 @@ mod tests {
             local_next_seq_to_receive: Seq::from_u32(0),
             remote_seqs_to_ack: vec![],
             acked_local_seqs: vec![Seq::from_u32(2)],
-            local_receiving_queue_free_len: 1,
+            local_rwnd_capacity: 1,
         };
         upload.set_state(state).unwrap();
 
@@ -928,7 +928,7 @@ mod tests {
             local_next_seq_to_receive: Seq::from_u32(0),
             remote_seqs_to_ack: vec![],
             acked_local_seqs: vec![Seq::from_u32(2)],
-            local_receiving_queue_free_len: 1,
+            local_rwnd_capacity: 1,
         };
         upload.set_state(state).unwrap();
 
@@ -953,7 +953,7 @@ mod tests {
             local_next_seq_to_receive: Seq::from_u32(0),
             remote_seqs_to_ack: vec![],
             acked_local_seqs: vec![Seq::from_u32(2)],
-            local_receiving_queue_free_len: 1,
+            local_rwnd_capacity: 1,
         };
         upload.set_state(state).unwrap();
 

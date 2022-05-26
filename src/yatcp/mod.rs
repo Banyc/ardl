@@ -25,7 +25,7 @@ impl YatcpBuilder {
         }
         .build();
         let download = YatcpDownloadBuilder {
-            max_local_receiving_queue_len: self.max_local_receiving_queue_len,
+            recv_buf_len: self.max_local_receiving_queue_len,
         }
         .build();
         (upload, download)
@@ -38,7 +38,7 @@ pub struct SetUploadState {
     pub local_next_seq_to_receive: Seq,
     pub remote_seqs_to_ack: Vec<Seq>,
     pub acked_local_seqs: Vec<Seq>,
-    pub local_receiving_queue_free_len: usize,
+    pub local_rwnd_capacity: usize,
 }
 
 #[cfg(test)]
@@ -100,7 +100,7 @@ mod tests {
             assert!(is_written);
 
             //                               rwnd] [     nack] [      seq] [cmd
-            assert_eq!(inflight.data(), vec![0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+            assert_eq!(inflight.data(), vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
             let inflight = BufRdr::from_wtr(inflight);
             let upload1_changes = download1.input(inflight).unwrap();
@@ -159,7 +159,7 @@ mod tests {
             assert!(is_written);
 
             //                               rwnd] [     nack] [      seq] [cmd
-            assert_eq!(inflight.data(), vec![0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+            assert_eq!(inflight.data(), vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
             // dropped
         }
