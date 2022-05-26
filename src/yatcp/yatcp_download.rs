@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 
 use crate::{
     protocols::yatcp::{
@@ -8,13 +8,11 @@ use crate::{
     utils::{self, BufFrag, Seq},
 };
 
-use super::SetUploadState;
+use super::{rwnd::Rwnd, SetUploadState};
 
 pub struct YatcpDownload {
     received_queue: VecDeque<BufFrag>,
-    receiving_queue: BTreeMap<Seq, BufFrag>,
-    local_next_seq_to_receive: Seq,
-    max_local_receiving_queue_len: usize, // inclusive
+    receiving_queue: Rwnd<BufFrag>,
     stat: LocalStat,
 }
 
@@ -26,9 +24,7 @@ impl YatcpDownloadBuilder {
     pub fn build(self) -> YatcpDownload {
         let this = YatcpDownload {
             received_queue: VecDeque::new(),
-            receiving_queue: BTreeMap::new(),
-            local_next_seq_to_receive: Seq::from_u32(0),
-            max_local_receiving_queue_len: self.max_local_receiving_queue_len,
+            receiving_queue: Rwnd::new(self.max_local_receiving_queue_len),
             stat: LocalStat {
                 out_of_windows: 0,
                 out_of_orders: 0,
@@ -48,11 +44,9 @@ pub enum Error {
 impl YatcpDownload {
     #[inline]
     fn check_rep(&self) {
-        assert!(self.max_local_receiving_queue_len > 0);
-        assert!(self.max_local_receiving_queue_len <= u16::MAX as usize);
-        assert!(self.receiving_queue.len() <= self.max_local_receiving_queue_len);
-        for (&seq, _) in &self.receiving_queue {
-            assert!(self.local_next_seq_to_receive < seq);
+        assert!(self.receiving_queue.max_len() <= u16::MAX as usize);
+        for (&seq, _) in self.receiving_queue.wnd() {
+            assert!(self.receiving_queue.next_seq_to_receive() < seq);
             break;
         }
     }
@@ -62,7 +56,7 @@ impl YatcpDownload {
             out_of_windows: self.stat.out_of_windows,
             out_of_orders: self.stat.out_of_orders,
             decoding_errors: self.stat.decoding_errors,
-            next_seq_to_receive: self.local_next_seq_to_receive,
+            next_seq_to_receive: self.receiving_queue.next_seq_to_receive(),
         }
     }
 
@@ -95,11 +89,10 @@ impl YatcpDownload {
         let state_changes = SetUploadState {
             remote_rwnd: partial_state_changes.remote_rwnd,
             remote_nack: partial_state_changes.remote_nack,
-            local_next_seq_to_receive: self.local_next_seq_to_receive,
+            local_next_seq_to_receive: self.receiving_queue.next_seq_to_receive(),
             remote_seqs_to_ack: partial_state_changes.frags.remote_seqs_to_ack,
             acked_local_seqs: partial_state_changes.frags.acked_local_seqs,
-            local_receiving_queue_free_len: self.max_local_receiving_queue_len
-                - self.receiving_queue.len(),
+            local_receiving_queue_free_len: self.receiving_queue.free_len(),
         };
         Ok(state_changes)
     }
@@ -168,34 +161,24 @@ impl YatcpDownload {
                         }
                     };
                     // if out of rwnd
-                    if !(hdr.seq()
-                        < self
-                            .local_next_seq_to_receive
-                            .add_u32(self.max_local_receiving_queue_len as u32)
-                        && self.local_next_seq_to_receive <= hdr.seq())
-                    {
+                    if !(self.receiving_queue.is_acceptable(hdr.seq())) {
                         self.stat.out_of_windows += 1;
                         // drop the fragment
                     } else {
                         // schedule uploader to ack this seq
                         remote_seqs_to_ack.push(hdr.seq());
 
-                        if hdr.seq() == self.local_next_seq_to_receive {
-                            // skip inserting this consecutive fragment to rwnd
-                            // hot path
+                        // skip inserting this consecutive fragment to rwnd
+                        // hot path
+                        if let Some(body) =
+                            self.receiving_queue.insert_then_pop_next(hdr.seq(), body)
+                        {
                             self.received_queue.push_back(body);
-                            self.local_next_seq_to_receive.increment();
-                        } else {
-                            // insert this fragment to rwnd
-                            self.receiving_queue.insert(hdr.seq(), body);
                         }
 
                         // pop consecutive fragments from the rwnd to the ready queue
-                        while let Some(frag) =
-                            self.receiving_queue.remove(&self.local_next_seq_to_receive)
-                        {
+                        while let Some(frag) = self.receiving_queue.pop_next() {
                             self.received_queue.push_back(frag);
-                            self.local_next_seq_to_receive.increment();
                         }
                     }
                 }
