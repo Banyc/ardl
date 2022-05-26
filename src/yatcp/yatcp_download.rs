@@ -5,10 +5,10 @@ use crate::{
         frag_hdr::{FragCommand, FragHeader},
         packet_hdr::PacketHeader,
     },
-    utils::{self, BufFrag, Seq},
+    utils::{self, BufFrag, Rwnd, Seq},
 };
 
-use super::{rwnd::Rwnd, SetUploadState};
+use super::SetUploadState;
 
 pub struct YatcpDownload {
     received_queue: VecDeque<BufFrag>,
