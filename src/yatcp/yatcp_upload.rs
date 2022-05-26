@@ -45,7 +45,7 @@ pub struct YatcpUpload {
 }
 
 pub struct YatcpUploadBuilder {
-    pub local_receiving_queue_len: usize,
+    pub local_rwnd_capacity: usize,
     pub nack_duplicate_threshold_to_activate_fast_retransmit: usize,
     pub ratio_rto_to_one_rtt: f64,
 }
@@ -56,7 +56,7 @@ impl YatcpUploadBuilder {
             to_send_queue: VecDeque::new(),
             sending_queue: BTreeMap::new(),
             to_ack_queue: VecDeque::new(),
-            local_rwnd_capacity: self.local_receiving_queue_len,
+            local_rwnd_capacity: self.local_rwnd_capacity,
             local_next_seq_to_receive: Seq::from_u32(0),
             next_seq_to_send: Seq::from_u32(0),
             remote_rwnd: 0,
@@ -80,7 +80,7 @@ impl YatcpUploadBuilder {
 
     pub fn default() -> YatcpUploadBuilder {
         let builder = Self {
-            local_receiving_queue_len: u16::MAX as usize,
+            local_rwnd_capacity: u16::MAX as usize,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
         };
@@ -722,7 +722,7 @@ mod tests {
     fn test_fast_retransmit1() {
         let dup = 1;
         let mut upload = YatcpUploadBuilder {
-            local_receiving_queue_len: 0,
+            local_rwnd_capacity: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
         }
@@ -770,7 +770,7 @@ mod tests {
     fn test_fast_retransmit_no() {
         let dup = 0;
         let mut upload = YatcpUploadBuilder {
-            local_receiving_queue_len: 0,
+            local_rwnd_capacity: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
         }
@@ -822,7 +822,7 @@ mod tests {
     fn test_fast_retransmit2() {
         let dup = 0;
         let mut upload = YatcpUploadBuilder {
-            local_receiving_queue_len: 0,
+            local_rwnd_capacity: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
         }
@@ -887,7 +887,7 @@ mod tests {
     fn test_fast_retransmit3() {
         let dup = 1;
         let mut upload = YatcpUploadBuilder {
-            local_receiving_queue_len: 0,
+            local_rwnd_capacity: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
         }

@@ -18,7 +18,7 @@ pub struct YatcpBuilder {
 impl YatcpBuilder {
     pub fn build(self) -> (YatcpUpload, YatcpDownload) {
         let upload = YatcpUploadBuilder {
-            local_receiving_queue_len: self.max_local_receiving_queue_len,
+            local_rwnd_capacity: self.max_local_receiving_queue_len,
             nack_duplicate_threshold_to_activate_fast_retransmit: self
                 .nack_duplicate_threshold_to_activate_fast_retransmit,
             ratio_rto_to_one_rtt: self.ratio_rto_to_one_rtt,
