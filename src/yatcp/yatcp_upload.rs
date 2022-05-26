@@ -59,6 +59,8 @@ impl YatcpUploadBuilder {
                 retransmissions: 0,
                 rto_hits: 0,
                 fast_retransmissions: 0,
+                pushes: 0,
+                acks: 0,
             },
             fast_retransmission_wnd: FastRetransmissionWnd::new(
                 NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
@@ -88,6 +90,9 @@ impl YatcpUpload {
             retransmissions: self.stat.retransmissions,
             rto_hits: self.stat.rto_hits,
             fast_retransmissions: self.stat.fast_retransmissions,
+            pushes: self.stat.pushes,
+            acks: self.stat.acks,
+            next_seq_to_send: self.next_seq_to_send,
         }
     }
 
@@ -156,6 +161,7 @@ impl YatcpUpload {
             let bytes = hdr.to_bytes();
             assert_eq!(bytes.len(), ACK_HDR_LEN);
             wtr.append(&bytes).unwrap();
+            self.stat.acks += 1;
         }
 
         // retransmission
@@ -197,6 +203,7 @@ impl YatcpUpload {
                 self.stat.rto_hits += 1;
             }
             self.stat.retransmissions += 1;
+            self.stat.pushes += 1;
         }
 
         if self.to_send_queue.is_empty() {
@@ -259,6 +266,7 @@ impl YatcpUpload {
             frag.body().append_to(wtr).unwrap();
             // register the frag to sending_queue
             self.sending_queue.insert(seq, frag);
+            self.stat.pushes += 1;
         }
 
         self.check_rep();
@@ -378,6 +386,8 @@ struct LocalStat {
     retransmissions: u64,
     rto_hits: u64,
     fast_retransmissions: u64,
+    pushes: u64,
+    acks: u64,
 }
 
 #[derive(Debug, PartialEq)]
@@ -386,6 +396,9 @@ pub struct Stat {
     pub retransmissions: u64,
     pub rto_hits: u64,
     pub fast_retransmissions: u64,
+    pub pushes: u64,
+    pub acks: u64,
+    pub next_seq_to_send: Seq,
 }
 
 #[cfg(test)]

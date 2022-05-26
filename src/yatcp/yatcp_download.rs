@@ -29,6 +29,9 @@ impl YatcpDownloadBuilder {
                 out_of_windows: 0,
                 out_of_orders: 0,
                 decoding_errors: 0,
+                packets: 0,
+                acks: 0,
+                pushes: 0,
             },
         };
         this.check_rep();
@@ -57,6 +60,9 @@ impl YatcpDownload {
             out_of_orders: self.stat.out_of_orders,
             decoding_errors: self.stat.decoding_errors,
             next_seq_to_receive: self.receiving_queue.next_seq_to_receive(),
+            packets: self.stat.packets,
+            pushes: self.stat.pushes,
+            acks: self.stat.acks,
         }
     }
 
@@ -119,6 +125,7 @@ impl YatcpDownload {
             remote_rwnd: hdr.wnd(),
             remote_nack: hdr.nack(),
         };
+        self.stat.packets += 1;
         Ok(state_changes)
     }
 
@@ -174,6 +181,8 @@ impl YatcpDownload {
                             self.receiving_queue.insert_then_pop_next(hdr.seq(), body)
                         {
                             self.received_queue.push_back(body);
+                        } else {
+                            self.stat.out_of_orders += 1;
                         }
 
                         // pop consecutive fragments from the rwnd to the ready queue
@@ -181,9 +190,11 @@ impl YatcpDownload {
                             self.received_queue.push_back(frag);
                         }
                     }
+                    self.stat.pushes += 1;
                 }
                 FragCommand::Ack => {
                     acked_local_seqs.push(hdr.seq());
+                    self.stat.acks += 1;
                 }
             }
         }
@@ -210,6 +221,9 @@ struct LocalStat {
     out_of_windows: u64,
     out_of_orders: u64,
     decoding_errors: u64,
+    packets: u64,
+    acks: u64,
+    pushes: u64,
 }
 
 #[derive(Debug, PartialEq)]
@@ -218,6 +232,9 @@ pub struct Stat {
     pub out_of_orders: u64,
     pub decoding_errors: u64,
     pub next_seq_to_receive: Seq,
+    pub packets: u64,
+    pub acks: u64,
+    pub pushes: u64,
 }
 
 #[cfg(test)]
