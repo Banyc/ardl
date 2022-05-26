@@ -8,6 +8,12 @@ pub struct Rwnd<T> {
     next_seq_to_receive: Seq,
 }
 
+pub enum SeqLocationToRwnd {
+    InRecvWindow,
+    TooLate,
+    TooEarly,
+}
+
 impl<T> Rwnd<T> {
     fn check_rep(&self) {
         assert!(self.max_len > 0);
@@ -53,8 +59,23 @@ impl<T> Rwnd<T> {
     #[must_use]
     #[inline]
     pub fn is_acceptable(&self, seq: Seq) -> bool {
-        seq < self.next_seq_to_receive.add_u32(self.max_len as u32)
-            && self.next_seq_to_receive <= seq
+        if let SeqLocationToRwnd::InRecvWindow = self.location(seq) {
+            true
+        } else {
+            false
+        }
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn location(&self, seq: Seq) -> SeqLocationToRwnd {
+        if !(self.next_seq_to_receive <= seq) {
+            SeqLocationToRwnd::TooLate
+        } else if !(seq < self.next_seq_to_receive.add_u32(self.max_len as u32)) {
+            SeqLocationToRwnd::TooEarly
+        } else {
+            SeqLocationToRwnd::InRecvWindow
+        }
     }
 
     #[inline]

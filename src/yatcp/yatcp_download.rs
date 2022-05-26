@@ -26,7 +26,8 @@ impl YatcpDownloadBuilder {
             received_queue: VecDeque::new(),
             receiving_queue: Rwnd::new(self.max_local_receiving_queue_len),
             stat: LocalStat {
-                out_of_windows: 0,
+                early_pushes: 0,
+                late_pushes: 0,
                 out_of_orders: 0,
                 decoding_errors: 0,
                 packets: 0,
@@ -56,7 +57,8 @@ impl YatcpDownload {
 
     pub fn stat(&self) -> Stat {
         Stat {
-            out_of_windows: self.stat.out_of_windows,
+            early_pushes: self.stat.early_pushes,
+            late_pushes: self.stat.late_pushes,
             out_of_orders: self.stat.out_of_orders,
             decoding_errors: self.stat.decoding_errors,
             next_seq_to_receive: self.receiving_queue.next_seq_to_receive(),
@@ -168,26 +170,36 @@ impl YatcpDownload {
                         }
                     };
                     // if out of rwnd
-                    if !(self.receiving_queue.is_acceptable(hdr.seq())) {
-                        self.stat.out_of_windows += 1;
-                        // drop the fragment
-                    } else {
-                        // schedule uploader to ack this seq
-                        remote_seqs_to_ack.push(hdr.seq());
+                    match self.receiving_queue.location(hdr.seq()) {
+                        utils::SeqLocationToRwnd::InRecvWindow => {
+                            // schedule uploader to ack this seq
+                            remote_seqs_to_ack.push(hdr.seq());
 
-                        // skip inserting this consecutive fragment to rwnd
-                        // hot path
-                        if let Some(body) =
-                            self.receiving_queue.insert_then_pop_next(hdr.seq(), body)
-                        {
-                            self.received_queue.push_back(body);
-                        } else {
-                            self.stat.out_of_orders += 1;
+                            // skip inserting this consecutive fragment to rwnd
+                            // hot path
+                            if let Some(body) =
+                                self.receiving_queue.insert_then_pop_next(hdr.seq(), body)
+                            {
+                                self.received_queue.push_back(body);
+                            } else {
+                                self.stat.out_of_orders += 1;
+                            }
+
+                            // pop consecutive fragments from the rwnd to the ready queue
+                            while let Some(frag) = self.receiving_queue.pop_next() {
+                                self.received_queue.push_back(frag);
+                            }
                         }
+                        utils::SeqLocationToRwnd::TooLate => {
+                            // schedule uploader to ack this seq
+                            remote_seqs_to_ack.push(hdr.seq());
 
-                        // pop consecutive fragments from the rwnd to the ready queue
-                        while let Some(frag) = self.receiving_queue.pop_next() {
-                            self.received_queue.push_back(frag);
+                            self.stat.late_pushes += 1;
+                            // drop the fragment
+                        }
+                        utils::SeqLocationToRwnd::TooEarly => {
+                            self.stat.early_pushes += 1;
+                            // drop the fragment
                         }
                     }
                     self.stat.pushes += 1;
@@ -218,7 +230,8 @@ struct HandlePacketStateChanges {
 }
 
 struct LocalStat {
-    out_of_windows: u64,
+    late_pushes: u64,
+    early_pushes: u64,
     out_of_orders: u64,
     decoding_errors: u64,
     packets: u64,
@@ -228,7 +241,8 @@ struct LocalStat {
 
 #[derive(Debug, PartialEq)]
 pub struct Stat {
-    pub out_of_windows: u64,
+    pub late_pushes: u64,
+    pub early_pushes: u64,
     pub out_of_orders: u64,
     pub decoding_errors: u64,
     pub next_seq_to_receive: Seq,
@@ -578,7 +592,7 @@ mod tests {
             assert_eq!(changes.local_receiving_queue_free_len, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd, 2);
-            assert_eq!(changes.remote_seqs_to_ack, vec![]);
+            assert_eq!(changes.remote_seqs_to_ack, vec![Seq::from_u32(0)]);
             assert_eq!(changes.acked_local_seqs, vec![]);
             assert!(download.recv().is_none());
         }
