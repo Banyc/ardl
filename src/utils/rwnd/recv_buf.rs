@@ -30,7 +30,7 @@ impl<T> RecvBuf<T> {
     #[must_use]
     pub fn pop_front(&mut self) -> Option<T> {
         if let Some(x) = self.sorted.pop_front() {
-            self.rwnd.increment_max_len();
+            self.rwnd.increment_capacity();
             self.check_rep();
             Some(x)
         } else {
