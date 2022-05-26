@@ -77,8 +77,15 @@ fn main() {
     }
     {
         let connection1 = Arc::clone(&listener);
+        let uploading_messaging_tx1 = Arc::clone(&uploading_messaging_tx);
         let downloading_messaging_tx1 = Arc::clone(&downloading_messaging_tx);
-        let thread = thread::spawn(move || socket_recving(connection1, downloading_messaging_tx1));
+        let thread = thread::spawn(move || {
+            socket_recving(
+                connection1,
+                uploading_messaging_tx1,
+                downloading_messaging_tx1,
+            )
+        });
         threads.push(thread);
     }
 
@@ -123,10 +130,14 @@ fn yatcp_uploading(
     loop {
         let msg = messaging.recv().unwrap();
         match msg {
-            UploadingMessaging::SetUploadStates(x) => {
-                upload.set_state(x).unwrap();
+            UploadingMessaging::SetUploadState(state) => {
+                upload.set_state(state).unwrap();
             }
             UploadingMessaging::Flush => {
+                if let None = remote_addr_ {
+                    continue;
+                }
+
                 let mut wtr = OwnedBufWtr::new(MTU, 0);
                 let is_written = upload.append_packet_to_and_if_written(&mut wtr);
                 if !is_written {
@@ -135,9 +146,8 @@ fn yatcp_uploading(
 
                 listener.send_to(wtr.data(), remote_addr_.unwrap()).unwrap();
             }
-            UploadingMessaging::ToSend(rdr, remote_addr) => {
+            UploadingMessaging::ToSend(rdr) => {
                 upload.to_send(rdr);
-                remote_addr_ = Some(remote_addr);
             }
             UploadingMessaging::PrintStat => {
                 let stat = upload.stat();
@@ -152,6 +162,9 @@ fn yatcp_uploading(
                 }
                 old_stat = Some(stat);
             }
+            UploadingMessaging::SetRemoteAddr(remote_addr) => {
+                remote_addr_ = Some(remote_addr);
+            }
         }
     }
 }
@@ -165,14 +178,14 @@ fn yatcp_downloading(
     loop {
         let msg = messaging.recv().unwrap();
         match msg {
-            DownloadingMessaging::ConnRecv(wtr, remote_addr) => {
+            DownloadingMessaging::ConnRecv(wtr) => {
                 let rdr = BufRdr::from_wtr(wtr);
                 let set_upload_states = match download.input(rdr) {
                     Ok(x) => x,
                     Err(_) => todo!(),
                 };
                 uploading_messaging_tx
-                    .send(UploadingMessaging::SetUploadStates(set_upload_states))
+                    .send(UploadingMessaging::SetUploadState(set_upload_states))
                     .unwrap();
 
                 let mut buf = Vec::new();
@@ -184,10 +197,7 @@ fn yatcp_downloading(
                     println!("{}, {:X?}", String::from_utf8_lossy(&buf), buf);
 
                     uploading_messaging_tx
-                        .send(UploadingMessaging::ToSend(
-                            BufRdr::from_bytes(buf),
-                            remote_addr,
-                        ))
+                        .send(UploadingMessaging::ToSend(BufRdr::from_bytes(buf)))
                         .unwrap();
                 }
             }
@@ -210,6 +220,7 @@ fn yatcp_downloading(
 
 fn socket_recving(
     listener: Arc<UdpSocket>,
+    uploading_messaging: Arc<mpsc::SyncSender<UploadingMessaging>>,
     downloading_messaging: Arc<mpsc::SyncSender<DownloadingMessaging>>,
 ) {
     loop {
@@ -218,20 +229,24 @@ fn socket_recving(
 
         let wtr = OwnedBufWtr::from_bytes(buf, 0, len);
 
+        uploading_messaging
+            .send(UploadingMessaging::SetRemoteAddr(remote_addr))
+            .unwrap();
         downloading_messaging
-            .send(DownloadingMessaging::ConnRecv(wtr, remote_addr))
+            .send(DownloadingMessaging::ConnRecv(wtr))
             .unwrap();
     }
 }
 
 enum UploadingMessaging {
-    SetUploadStates(SetUploadState),
+    SetUploadState(SetUploadState),
     Flush,
-    ToSend(BufRdr, SocketAddr),
+    ToSend(BufRdr),
     PrintStat,
+    SetRemoteAddr(SocketAddr),
 }
 
 enum DownloadingMessaging {
-    ConnRecv(OwnedBufWtr, SocketAddr),
+    ConnRecv(OwnedBufWtr),
     PrintStat,
 }
