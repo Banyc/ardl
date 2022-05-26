@@ -17,8 +17,6 @@ const ALPHA: f64 = 1.0 / 8.0;
 const MAX_RTO_MS: u64 = 60_000;
 const DEFAULT_RTO_MS: u64 = 3_000; // make it bigger to avoid RTO floods
 const MIN_RTO_MS: u64 = 100;
-const RATIO_RTT_RTO: f64 = 1.5;
-const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 0;
 static MAX_RTO: time::Duration = Duration::from_millis(MAX_RTO_MS);
 static DEFAULT_RTO: time::Duration = Duration::from_millis(DEFAULT_RTO_MS);
 static MIN_RTO: time::Duration = Duration::from_millis(MIN_RTO_MS);
@@ -38,10 +36,18 @@ pub struct YatcpUpload {
 
     // stat
     stat: LocalStat,
+
+    // const
+    ratio_rto_to_one_rtt: f64,
+
+    // unit tests
+    disable_rto: bool,
 }
 
 pub struct YatcpUploadBuilder {
     pub local_receiving_queue_len: usize,
+    pub nack_duplicate_threshold_to_activate_fast_retransmit: usize,
+    pub ratio_rto_to_one_rtt: f64,
 }
 
 impl YatcpUploadBuilder {
@@ -63,11 +69,22 @@ impl YatcpUploadBuilder {
                 acks: 0,
             },
             fast_retransmission_wnd: FastRetransmissionWnd::new(
-                NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
+                self.nack_duplicate_threshold_to_activate_fast_retransmit,
             ),
+            ratio_rto_to_one_rtt: self.ratio_rto_to_one_rtt,
+            disable_rto: false,
         };
         this.check_rep();
         this
+    }
+
+    pub fn default() -> YatcpUploadBuilder {
+        let builder = Self {
+            local_receiving_queue_len: u16::MAX as usize,
+            nack_duplicate_threshold_to_activate_fast_retransmit: 0,
+            ratio_rto_to_one_rtt: 1.5,
+        };
+        builder
     }
 }
 
@@ -176,11 +193,13 @@ impl YatcpUpload {
             if !(frag.body().len() + PUSH_HDR_LEN <= wtr.back_len()) {
                 continue;
             }
-            if !(frag.is_timeout(&rto)
+            let is_timeout = frag.is_timeout(&rto);
+            let if_fast_retransmit = self.fast_retransmission_wnd.contains(seq);
+            if !(
                 // fast retransmit
                 // TODO: test cases
-                || self.fast_retransmission_wnd.contains(seq))
-            {
+                (!self.disable_rto && is_timeout) || if_fast_retransmit
+            ) {
                 continue;
             }
             let hdr = FragHeaderBuilder {
@@ -196,10 +215,11 @@ impl YatcpUpload {
             wtr.append(&bytes).unwrap();
             frag.body().append_to(wtr).unwrap();
             frag.to_retransmit(); // test case: `test_rto_once`
-            if self.fast_retransmission_wnd.contains(seq) {
+            if if_fast_retransmit {
                 self.fast_retransmission_wnd.retransmitted(seq); // test case: `test_fast_retransmit`
                 self.stat.fast_retransmissions += 1;
-            } else {
+            }
+            if is_timeout {
                 self.stat.rto_hits += 1;
             }
             self.stat.retransmissions += 1;
@@ -278,7 +298,7 @@ impl YatcpUpload {
     pub fn rto(&self) -> time::Duration {
         match self.stat.srtt {
             Some(srtt) => {
-                let rto = srtt.mul_f64(RATIO_RTT_RTO);
+                let rto = srtt.mul_f64(self.ratio_rto_to_one_rtt);
                 let rto = Duration::min(rto, MAX_RTO);
                 let rto = Duration::max(rto, MIN_RTO);
                 rto
@@ -408,22 +428,14 @@ mod tests {
     use crate::{
         protocols::yatcp::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
         utils::{BufRdr, BufWtr, OwnedBufWtr, Seq},
-        yatcp::{
-            yatcp_upload::{
-                YatcpUploadBuilder, NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
-            },
-            SetUploadState,
-        },
+        yatcp::{yatcp_upload::YatcpUploadBuilder, SetUploadState},
     };
 
     const MTU: usize = 512;
 
     #[test]
     fn test_empty() {
-        let mut upload = YatcpUploadBuilder {
-            local_receiving_queue_len: 0,
-        }
-        .build();
+        let mut upload = YatcpUploadBuilder::default().build();
         let buf = OwnedBufWtr::new(MTU / 2, 0);
         let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr);
@@ -434,10 +446,8 @@ mod tests {
 
     #[test]
     fn test_few_1() {
-        let mut upload = YatcpUploadBuilder {
-            local_receiving_queue_len: 0,
-        }
-        .build();
+        let mut upload = YatcpUploadBuilder::default().build();
+        upload.disable_rto = true;
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin = vec![0, 1, 2];
         buf.append(&origin).unwrap();
@@ -456,15 +466,13 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        assert!(!upload.append_packet_to_and_if_written(&mut packet));
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        assert!(!is_written);
     }
 
     #[test]
     fn test_few_2() {
-        let mut upload = YatcpUploadBuilder {
-            local_receiving_queue_len: 0,
-        }
-        .build();
+        let mut upload = YatcpUploadBuilder::default().build();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
@@ -502,10 +510,7 @@ mod tests {
 
     #[test]
     fn test_few_many() {
-        let mut upload = YatcpUploadBuilder {
-            local_receiving_queue_len: 0,
-        }
-        .build();
+        let mut upload = YatcpUploadBuilder::default().build();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
@@ -563,10 +568,7 @@ mod tests {
 
     #[test]
     fn test_many_few() {
-        let mut upload = YatcpUploadBuilder {
-            local_receiving_queue_len: 0,
-        }
-        .build();
+        let mut upload = YatcpUploadBuilder::default().build();
         let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin1 = vec![3; MTU];
         buf.append(&origin1).unwrap();
@@ -630,10 +632,7 @@ mod tests {
 
     #[test]
     fn test_ack1() {
-        let mut upload = YatcpUploadBuilder {
-            local_receiving_queue_len: 0,
-        }
-        .build();
+        let mut upload = YatcpUploadBuilder::default().build();
         upload.set_remote_rwnd(2);
 
         let origin1 = vec![0, 1, 2];
@@ -681,10 +680,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_not_enough_space_for_push() {
-        let mut upload = YatcpUploadBuilder {
-            local_receiving_queue_len: 0,
-        }
-        .build();
+        let mut upload = YatcpUploadBuilder::default().build();
         upload.set_remote_rwnd(2);
 
         let origin1 = vec![0, 1, 2];
@@ -698,10 +694,7 @@ mod tests {
 
     #[test]
     fn test_rto_once() {
-        let mut upload = YatcpUploadBuilder {
-            local_receiving_queue_len: 0,
-        }
-        .build();
+        let mut upload = YatcpUploadBuilder::default().build();
         upload.set_remote_rwnd(2);
 
         let origin1 = vec![0, 1, 2];
@@ -726,11 +719,15 @@ mod tests {
     }
 
     #[test]
-    fn test_fast_retransmit() {
+    fn test_fast_retransmit1() {
+        let dup = 1;
         let mut upload = YatcpUploadBuilder {
             local_receiving_queue_len: 0,
+            nack_duplicate_threshold_to_activate_fast_retransmit: dup,
+            ratio_rto_to_one_rtt: 1.5,
         }
         .build();
+        upload.disable_rto = true;
         upload.set_remote_rwnd(2);
 
         let origin1 = vec![0, 1, 2];
@@ -751,25 +748,220 @@ mod tests {
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         assert!(is_written);
 
-        for i in 0..NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT + 1 {
-            let state = SetUploadState {
-                remote_rwnd: 99,
-                remote_nack: Seq::from_u32(0),
-                local_next_seq_to_receive: Seq::from_u32(0),
-                remote_seqs_to_ack: vec![],
-                acked_local_seqs: vec![Seq::from_u32(1)],
-                local_receiving_queue_free_len: 1,
-            };
-            upload.set_state(state).unwrap();
+        // nack is 0 by default. When receiving another same nack, the fast retransmission gets activated since now the dup count becomes 1
 
-            packet.reset_data(0);
-            let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        let state = SetUploadState {
+            remote_rwnd: 99,
+            remote_nack: Seq::from_u32(0),
+            local_next_seq_to_receive: Seq::from_u32(0),
+            remote_seqs_to_ack: vec![],
+            acked_local_seqs: vec![Seq::from_u32(1)],
+            local_receiving_queue_free_len: 1,
+        };
+        upload.set_state(state).unwrap();
 
-            if i == NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT {
-                assert!(is_written);
-            } else {
-                assert!(!is_written);
-            }
+        packet.reset_data(0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+
+        assert!(is_written);
+    }
+
+    #[test]
+    fn test_fast_retransmit_no() {
+        let dup = 0;
+        let mut upload = YatcpUploadBuilder {
+            local_receiving_queue_len: 0,
+            nack_duplicate_threshold_to_activate_fast_retransmit: dup,
+            ratio_rto_to_one_rtt: 1.5,
         }
+        .build();
+        upload.disable_rto = true;
+        upload.set_remote_rwnd(2);
+
+        let origin1 = vec![0, 1, 2];
+        {
+            let rdr = BufRdr::from_bytes(origin1);
+            upload.to_send(rdr);
+        }
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        assert!(is_written);
+
+        let origin2 = vec![3];
+        {
+            let rdr = BufRdr::from_bytes(origin2);
+            upload.to_send(rdr);
+        }
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        assert!(is_written);
+
+        let state = SetUploadState {
+            remote_rwnd: 99,
+            remote_nack: Seq::from_u32(1),
+            local_next_seq_to_receive: Seq::from_u32(0),
+            remote_seqs_to_ack: vec![],
+            acked_local_seqs: vec![Seq::from_u32(0)],
+            local_receiving_queue_free_len: 1,
+        };
+        upload.set_state(state).unwrap();
+
+        // remote wants seq(1)
+        // since no out-of-order acks from the remote, we don't retransmit any seq
+
+        // 0   1
+        // ack nack
+
+        packet.reset_data(0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+
+        assert!(!is_written);
+    }
+
+    #[test]
+    fn test_fast_retransmit2() {
+        let dup = 0;
+        let mut upload = YatcpUploadBuilder {
+            local_receiving_queue_len: 0,
+            nack_duplicate_threshold_to_activate_fast_retransmit: dup,
+            ratio_rto_to_one_rtt: 1.5,
+        }
+        .build();
+        upload.disable_rto = true;
+        upload.set_remote_rwnd(99);
+
+        let origin1 = vec![0, 1, 2];
+        {
+            let rdr = BufRdr::from_bytes(origin1);
+            upload.to_send(rdr);
+        }
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        assert!(is_written);
+
+        let origin2 = vec![3];
+        {
+            let rdr = BufRdr::from_bytes(origin2);
+            upload.to_send(rdr);
+        }
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        assert!(is_written);
+
+        let origin3 = vec![4];
+        {
+            let rdr = BufRdr::from_bytes(origin3);
+            upload.to_send(rdr);
+        }
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        assert!(is_written);
+
+        let state = SetUploadState {
+            remote_rwnd: 99,
+            remote_nack: Seq::from_u32(1),
+            local_next_seq_to_receive: Seq::from_u32(0),
+            remote_seqs_to_ack: vec![],
+            acked_local_seqs: vec![Seq::from_u32(2)],
+            local_receiving_queue_free_len: 1,
+        };
+        upload.set_state(state).unwrap();
+
+        // remote acked seq(2) but still wants seq(1)
+        // clearly, seq(2) is an out-of-order ack, everything before it should be retransmitted if DUP meets
+
+        // 0  1    2
+        //    nack ack
+
+        // seq(0) is implicitly acked by nack(1)
+
+        // dup count for nack(1): 0
+
+        packet.reset_data(0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+
+        assert!(is_written);
+    }
+
+    #[test]
+    fn test_fast_retransmit3() {
+        let dup = 1;
+        let mut upload = YatcpUploadBuilder {
+            local_receiving_queue_len: 0,
+            nack_duplicate_threshold_to_activate_fast_retransmit: dup,
+            ratio_rto_to_one_rtt: 1.5,
+        }
+        .build();
+        upload.disable_rto = true;
+        upload.set_remote_rwnd(99);
+
+        let origin1 = vec![0, 1, 2];
+        {
+            let rdr = BufRdr::from_bytes(origin1);
+            upload.to_send(rdr);
+        }
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        assert!(is_written);
+
+        let origin2 = vec![3];
+        {
+            let rdr = BufRdr::from_bytes(origin2);
+            upload.to_send(rdr);
+        }
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        assert!(is_written);
+
+        let origin3 = vec![4];
+        {
+            let rdr = BufRdr::from_bytes(origin3);
+            upload.to_send(rdr);
+        }
+        let mut packet = OwnedBufWtr::new(MTU, 0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        assert!(is_written);
+
+        let state = SetUploadState {
+            remote_rwnd: 99,
+            remote_nack: Seq::from_u32(1),
+            local_next_seq_to_receive: Seq::from_u32(0),
+            remote_seqs_to_ack: vec![],
+            acked_local_seqs: vec![Seq::from_u32(2)],
+            local_receiving_queue_free_len: 1,
+        };
+        upload.set_state(state).unwrap();
+
+        // remote acked seq(2) but still wants seq(1)
+        // clearly, seq(2) is an out-of-order ack, everything before it should be retransmitted if DUP meets
+
+        // 0  1    2
+        //    nack ack
+
+        // seq(0) is implicitly acked by nack(1)
+
+        // dup count for nack(1): 0
+
+        packet.reset_data(0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+
+        assert!(!is_written);
+
+        let state = SetUploadState {
+            remote_rwnd: 99,
+            remote_nack: Seq::from_u32(1),
+            local_next_seq_to_receive: Seq::from_u32(0),
+            remote_seqs_to_ack: vec![],
+            acked_local_seqs: vec![Seq::from_u32(2)],
+            local_receiving_queue_free_len: 1,
+        };
+        upload.set_state(state).unwrap();
+
+        // dup count for nack(1): 1
+
+        packet.reset_data(0);
+        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+
+        assert!(is_written);
     }
 }
