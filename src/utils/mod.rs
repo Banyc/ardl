@@ -4,5 +4,5 @@ mod seq;
 pub use seq::*;
 mod fast_retransmit;
 pub use fast_retransmit::*;
-mod rwnd;
-pub use rwnd::*;
+mod recv_buf;
+pub use recv_buf::*;
