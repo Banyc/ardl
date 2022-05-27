@@ -22,6 +22,7 @@ const LISTEN_ADDR: &str = "0.0.0.0:19479";
 const MAX_LOCAL_RWND_LEN: usize = 2;
 const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 0;
 const RATIO_RTO_TO_ONE_RTT: f64 = 1.5;
+const TO_SEND_BYTE_CAPACITY: usize = 1024 * 64;
 
 fn main() {
     // socket
@@ -42,6 +43,7 @@ fn main() {
         nack_duplicate_threshold_to_activate_fast_retransmit:
             NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
         ratio_rto_to_one_rtt: RATIO_RTO_TO_ONE_RTT,
+        to_send_byte_capacity: TO_SEND_BYTE_CAPACITY,
     }
     .build();
 
@@ -94,9 +96,9 @@ fn main() {
         let bytes = text.into_bytes();
         let byte_len = bytes.len();
         let wtr = OwnedBufWtr::from_bytes(bytes, 0, byte_len);
-        uploading_messaging_tx
-            .send(UploadingMessaging::ToSend(BufRdr::from_wtr(wtr)))
-            .unwrap();
+        let rdr = BufRdr::from_wtr(wtr);
+
+        block_sending(rdr, &uploading_messaging_tx);
     }
 }
 
@@ -146,9 +148,10 @@ fn yatcp_uploading(
 
                 connection.send(wtr.data()).unwrap();
             }
-            UploadingMessaging::ToSend(rdr) => {
-                upload.to_send(rdr);
-            }
+            UploadingMessaging::ToSend(rdr, responser) => match upload.to_send(rdr) {
+                Ok(()) => responser.send(UploadingToSendResponse::Ok).unwrap(),
+                Err(e) => responser.send(UploadingToSendResponse::Err(e.0)).unwrap(),
+            },
             UploadingMessaging::PrintStat => {
                 let stat = upload.stat();
                 if let Some(old_stat) = old_stat {
@@ -236,11 +239,35 @@ fn socket_recving(
 enum UploadingMessaging {
     SetUploadStates(SetUploadState),
     Flush,
-    ToSend(BufRdr),
+    ToSend(BufRdr, mpsc::SyncSender<UploadingToSendResponse>),
     PrintStat,
 }
 
 enum DownloadingMessaging {
     ConnRecv(OwnedBufWtr),
     PrintStat,
+}
+
+enum UploadingToSendResponse {
+    Ok,
+    Err(BufRdr),
+}
+
+fn block_sending(rdr: BufRdr, uploading_messaging_tx: &mpsc::SyncSender<UploadingMessaging>) {
+    let mut some_rdr = Some(rdr);
+    loop {
+        let rdr = some_rdr.take().unwrap();
+        let (responser, receiver) = mpsc::sync_channel(1);
+        uploading_messaging_tx
+            .send(UploadingMessaging::ToSend(rdr, responser))
+            .unwrap();
+        let res = receiver.recv().unwrap();
+        match res {
+            UploadingToSendResponse::Ok => break,
+            UploadingToSendResponse::Err(rdr) => {
+                some_rdr = Some(rdr);
+            }
+        }
+        thread::sleep(Duration::from_millis(FLUSH_INTERVAL_MS * 3));
+    }
 }

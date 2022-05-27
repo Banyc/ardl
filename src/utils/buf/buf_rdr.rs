@@ -85,6 +85,10 @@ impl BufRdr {
     pub fn is_empty(&self) -> bool {
         self.cursor == self.buf.data_len()
     }
+
+    pub fn len(&self) -> usize {
+        self.buf.data_len()
+    }
 }
 
 #[cfg(test)]

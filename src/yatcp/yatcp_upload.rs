@@ -11,7 +11,7 @@ use crate::{
     utils::{self, BufPasta, BufWtr, FastRetransmissionWnd, Seq, SubBufWtr},
 };
 
-use super::{sending_frag::SendingFrag, SetUploadState};
+use super::{sending_frag::SendingFrag, to_send_que::ToSendQue, SendError, SetUploadState};
 
 const ALPHA: f64 = 1.0 / 8.0;
 const MAX_RTO_MS: u64 = 60_000;
@@ -23,7 +23,7 @@ static MIN_RTO: time::Duration = Duration::from_millis(MIN_RTO_MS);
 
 pub struct YatcpUpload {
     // modified by `append_frags_to`
-    to_send_queue: VecDeque<utils::BufRdr>,
+    to_send_queue: ToSendQue,
     sending_queue: BTreeMap<Seq, SendingFrag>,
     to_ack_queue: VecDeque<Seq>,
     next_seq_to_send: Seq,
@@ -48,12 +48,13 @@ pub struct YatcpUploadBuilder {
     pub local_rwnd_capacity: usize,
     pub nack_duplicate_threshold_to_activate_fast_retransmit: usize,
     pub ratio_rto_to_one_rtt: f64,
+    pub to_send_byte_capacity: usize,
 }
 
 impl YatcpUploadBuilder {
     pub fn build(self) -> YatcpUpload {
         let this = YatcpUpload {
-            to_send_queue: VecDeque::new(),
+            to_send_queue: ToSendQue::new(self.to_send_byte_capacity),
             sending_queue: BTreeMap::new(),
             to_ack_queue: VecDeque::new(),
             local_rwnd_capacity: self.local_rwnd_capacity,
@@ -83,23 +84,20 @@ impl YatcpUploadBuilder {
             local_rwnd_capacity: u16::MAX as usize,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
+            to_send_byte_capacity: 1024 * 64,
         };
         builder
     }
 }
 
 #[derive(Debug)]
-pub enum Error {
+pub enum SetStateError {
     InvalidState,
 }
 
 impl YatcpUpload {
     #[inline]
-    fn check_rep(&self) {
-        if !self.to_send_queue.is_empty() {
-            assert!(!self.to_send_queue.front().unwrap().is_empty());
-        }
-    }
+    fn check_rep(&self) {}
 
     pub fn stat(&self) -> Stat {
         Stat {
@@ -113,12 +111,8 @@ impl YatcpUpload {
         }
     }
 
-    pub fn to_send(&mut self, rdr: utils::BufRdr) {
-        if rdr.is_empty() {
-            return;
-        }
-        self.to_send_queue.push_back(rdr);
-        self.check_rep();
+    pub fn to_send(&mut self, rdr: utils::BufRdr) -> Result<(), SendError<utils::BufRdr>> {
+        self.to_send_queue.push_back(rdr)
     }
 
     pub fn append_packet_to_and_if_written(&mut self, wtr: &mut impl BufWtr) -> bool {
@@ -254,16 +248,12 @@ impl YatcpUpload {
             assert!(frag_body_limit != 0);
             let mut frag_body = BufPasta::new();
             while !self.to_send_queue.is_empty() {
-                let mut rdr = self.to_send_queue.pop_front().unwrap();
-                let buf = rdr.try_slice(frag_body_limit - frag_body.len()).unwrap();
-                frag_body.append(buf);
-                if !rdr.is_empty() {
-                    self.to_send_queue.push_front(rdr);
-                }
-                if frag_body.len() == frag_body_limit {
+                let free_space = frag_body_limit - frag_body.len();
+                if free_space == 0 {
                     break;
                 }
-                assert!(frag_body.len() < frag_body_limit);
+                let buf = self.to_send_queue.slice_front(free_space);
+                frag_body.append(buf);
             }
             assert!(frag_body.len() <= frag_body_limit);
             assert!(frag_body.len() > 0);
@@ -367,10 +357,10 @@ impl YatcpUpload {
     }
 
     #[inline]
-    pub fn set_state(&mut self, delta: SetUploadState) -> Result<(), Error> {
+    pub fn set_state(&mut self, delta: SetUploadState) -> Result<(), SetStateError> {
         for &acked_local_seq in &delta.acked_local_seqs {
             if acked_local_seq == delta.remote_nack {
-                return Err(Error::InvalidState);
+                return Err(SetStateError::InvalidState);
             }
         }
 
@@ -438,7 +428,7 @@ mod tests {
         let mut upload = YatcpUploadBuilder::default().build();
         let buf = OwnedBufWtr::new(MTU / 2, 0);
         let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr);
+        upload.to_send(rdr).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         assert!(!is_written);
@@ -452,7 +442,7 @@ mod tests {
         let origin = vec![0, 1, 2];
         buf.append(&origin).unwrap();
         let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr);
+        upload.to_send(rdr).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         match is_written {
@@ -477,12 +467,12 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
         let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr);
+        upload.to_send(rdr).map_err(|_| ()).unwrap();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![3, 4];
         buf.append(&origin2).unwrap();
         let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr);
+        upload.to_send(rdr).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         match is_written {
@@ -515,12 +505,12 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
         let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr);
+        upload.to_send(rdr).map_err(|_| ()).unwrap();
         let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin2 = vec![3; MTU];
         buf.append(&origin2).unwrap();
         let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr);
+        upload.to_send(rdr).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         match is_written {
@@ -573,12 +563,12 @@ mod tests {
         let origin1 = vec![3; MTU];
         buf.append(&origin1).unwrap();
         let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr);
+        upload.to_send(rdr).map_err(|_| ()).unwrap();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![0, 1, 2];
         buf.append(&origin2).unwrap();
         let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr);
+        upload.to_send(rdr).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         // packet: _hdr hdr mtu-_hdr-hdr
@@ -640,14 +630,14 @@ mod tests {
             let mut buf = OwnedBufWtr::new(MTU / 2, 0);
             buf.append(&origin1).unwrap();
             let rdr = BufRdr::from_wtr(buf);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let origin2 = vec![3, 4];
         {
             let mut buf = OwnedBufWtr::new(MTU / 2, 0);
             buf.append(&origin2).unwrap();
             let rdr = BufRdr::from_wtr(buf);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -686,7 +676,7 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         {
             let rdr = BufRdr::from_bytes(origin1);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(PACKET_HDR_LEN + PUSH_HDR_LEN, 0);
         upload.append_packet_to_and_if_written(&mut packet);
@@ -700,7 +690,7 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         {
             let rdr = BufRdr::from_bytes(origin1);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -725,6 +715,7 @@ mod tests {
             local_rwnd_capacity: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
+            to_send_byte_capacity: usize::MAX,
         }
         .build();
         upload.disable_rto = true;
@@ -733,7 +724,7 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         {
             let rdr = BufRdr::from_bytes(origin1);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -742,7 +733,7 @@ mod tests {
         let origin2 = vec![3];
         {
             let rdr = BufRdr::from_bytes(origin2);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -773,6 +764,7 @@ mod tests {
             local_rwnd_capacity: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
+            to_send_byte_capacity: usize::MAX,
         }
         .build();
         upload.disable_rto = true;
@@ -781,7 +773,7 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         {
             let rdr = BufRdr::from_bytes(origin1);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -790,7 +782,7 @@ mod tests {
         let origin2 = vec![3];
         {
             let rdr = BufRdr::from_bytes(origin2);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -825,6 +817,7 @@ mod tests {
             local_rwnd_capacity: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
+            to_send_byte_capacity: usize::MAX,
         }
         .build();
         upload.disable_rto = true;
@@ -833,7 +826,7 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         {
             let rdr = BufRdr::from_bytes(origin1);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -842,7 +835,7 @@ mod tests {
         let origin2 = vec![3];
         {
             let rdr = BufRdr::from_bytes(origin2);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -851,7 +844,7 @@ mod tests {
         let origin3 = vec![4];
         {
             let rdr = BufRdr::from_bytes(origin3);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -890,6 +883,7 @@ mod tests {
             local_rwnd_capacity: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
+            to_send_byte_capacity: usize::MAX,
         }
         .build();
         upload.disable_rto = true;
@@ -898,7 +892,7 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         {
             let rdr = BufRdr::from_bytes(origin1);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -907,7 +901,7 @@ mod tests {
         let origin2 = vec![3];
         {
             let rdr = BufRdr::from_bytes(origin2);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -916,7 +910,7 @@ mod tests {
         let origin3 = vec![4];
         {
             let rdr = BufRdr::from_bytes(origin3);
-            upload.to_send(rdr);
+            upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
