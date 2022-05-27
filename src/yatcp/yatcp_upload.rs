@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::VecDeque,
     time::{self, Duration},
 };
 
@@ -8,7 +8,7 @@ use crate::{
         frag_hdr::{FragCommand, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN},
         packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
-    utils::{self, BufPasta, BufWtr, FastRetransmissionWnd, Seq, SubBufWtr},
+    utils::{self, BufPasta, BufWtr, FastRetransmissionWnd, Seq, SubBufWtr, Swnd},
 };
 
 use super::{sending_frag::SendingFrag, to_send_que::ToSendQue, SendError, SetUploadState};
@@ -24,14 +24,12 @@ static MIN_RTO: time::Duration = Duration::from_millis(MIN_RTO_MS);
 pub struct YatcpUpload {
     // modified by `append_frags_to`
     to_send_queue: ToSendQue,
-    sending_queue: BTreeMap<Seq, SendingFrag>,
+    swnd: Swnd<SendingFrag>,
     to_ack_queue: VecDeque<Seq>,
-    next_seq_to_send: Seq,
 
     // modified by setters
     local_rwnd_capacity: usize,
     local_next_seq_to_receive: Seq,
-    remote_rwnd: u16,
     fast_retransmission_wnd: FastRetransmissionWnd,
 
     // stat
@@ -49,18 +47,17 @@ pub struct YatcpUploadBuilder {
     pub nack_duplicate_threshold_to_activate_fast_retransmit: usize,
     pub ratio_rto_to_one_rtt: f64,
     pub to_send_byte_capacity: usize,
+    pub swnd_size_cap: usize,
 }
 
 impl YatcpUploadBuilder {
     pub fn build(self) -> YatcpUpload {
         let this = YatcpUpload {
             to_send_queue: ToSendQue::new(self.to_send_byte_capacity),
-            sending_queue: BTreeMap::new(),
+            swnd: Swnd::new(self.swnd_size_cap),
             to_ack_queue: VecDeque::new(),
             local_rwnd_capacity: self.local_recv_buf_len,
             local_next_seq_to_receive: Seq::from_u32(0),
-            next_seq_to_send: Seq::from_u32(0),
-            remote_rwnd: 0,
             stat: LocalStat {
                 srtt: None,
                 retransmissions: 0,
@@ -85,6 +82,7 @@ impl YatcpUploadBuilder {
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
             to_send_byte_capacity: 1024 * 64,
+            swnd_size_cap: u16::MAX as usize,
         };
         builder
     }
@@ -107,7 +105,7 @@ impl YatcpUpload {
             fast_retransmissions: self.stat.fast_retransmissions,
             pushes: self.stat.pushes,
             acks: self.stat.acks,
-            next_seq_to_send: self.next_seq_to_send,
+            next_seq_to_send: self.swnd.end(),
         }
     }
 
@@ -144,10 +142,7 @@ impl YatcpUpload {
 
     #[inline]
     fn append_frags_to(&mut self, wtr: &mut impl BufWtr) {
-        if self.to_ack_queue.is_empty()
-            && self.sending_queue.is_empty()
-            && self.to_send_queue.is_empty()
-        {
+        if self.to_ack_queue.is_empty() && self.swnd.is_empty() && self.to_send_queue.is_empty() {
             assert!(wtr.is_empty());
             return;
         }
@@ -178,7 +173,7 @@ impl YatcpUpload {
         // retransmission
         // write push from sending
         let rto = self.rto();
-        for (&seq, frag) in self.sending_queue.iter_mut() {
+        for (&seq, frag) in self.swnd.iter_mut() {
             if !(PUSH_HDR_LEN + 1 <= wtr.back_len()) {
                 self.check_rep();
                 assert!(!wtr.is_empty());
@@ -229,15 +224,9 @@ impl YatcpUpload {
             assert!(!wtr.is_empty());
             return;
         }
-        if !(self.sending_queue.len() < u16::max(self.remote_rwnd, 1) as usize) {
+        if self.swnd.is_full() {
             self.check_rep();
-            if wtr.is_empty() {
-                assert!(wtr.is_empty());
-                return;
-            } else {
-                assert!(!wtr.is_empty());
-                return;
-            }
+            return;
         }
 
         // move data from to_send queue to sending queue and output those data
@@ -258,12 +247,11 @@ impl YatcpUpload {
             assert!(frag_body.len() <= frag_body_limit);
             assert!(frag_body.len() > 0);
 
-            let seq = self.next_seq_to_send;
-            self.next_seq_to_send.increment();
             let frag = SendingFrag::new(frag_body);
+
             // write the frag to output buffer
             let hdr = FragHeaderBuilder {
-                seq,
+                seq: self.swnd.end(),
                 cmd: FragCommand::Push {
                     len: frag.body().len() as u32,
                 },
@@ -274,8 +262,10 @@ impl YatcpUpload {
             assert_eq!(bytes.len(), PUSH_HDR_LEN);
             wtr.append(&bytes).unwrap();
             frag.body().append_to(wtr).unwrap();
+
             // register the frag to sending_queue
-            self.sending_queue.insert(seq, frag);
+            self.swnd.push_back(frag);
+
             self.stat.pushes += 1;
         }
 
@@ -299,7 +289,7 @@ impl YatcpUpload {
 
     #[inline]
     fn set_remote_rwnd(&mut self, wnd: u16) {
-        self.remote_rwnd = wnd;
+        self.swnd.set_remote_rwnd_size(wnd as usize);
         self.check_rep();
     }
 
@@ -318,7 +308,7 @@ impl YatcpUpload {
     #[inline]
     fn set_acked_local_seq(&mut self, acked_local_seq: Seq) {
         // remove the selected sequence
-        if let Some(frag) = self.sending_queue.remove(&acked_local_seq) {
+        if let Some(frag) = self.swnd.remove(&acked_local_seq) {
             if !frag.is_retransmitted() {
                 // set smooth RTT
                 let frag_rtt = frag.since_last_sent();
@@ -337,17 +327,7 @@ impl YatcpUpload {
 
     #[inline]
     fn remove_sending_before(&mut self, remote_nack: Seq) {
-        let mut to_removes = Vec::new();
-        for (&seq, _) in &self.sending_queue {
-            if seq < remote_nack {
-                to_removes.push(seq);
-            } else {
-                break;
-            }
-        }
-        for to_remove in to_removes {
-            self.sending_queue.remove(&to_remove);
-        }
+        self.swnd.remove_before(remote_nack);
         self.check_rep();
     }
 
@@ -493,7 +473,7 @@ mod tests {
             }
             false => panic!(),
         }
-        assert_eq!(upload.next_seq_to_send.to_u32(), 1);
+        assert_eq!(upload.swnd.end().to_u32(), 1);
         packet.reset_data(0);
         assert!(!upload.append_packet_to_and_if_written(&mut packet));
     }
@@ -528,11 +508,11 @@ mod tests {
             }
             false => panic!(),
         }
-        assert_eq!(upload.next_seq_to_send.to_u32(), 1);
+        assert_eq!(upload.swnd.end().to_u32(), 1);
         packet.reset_data(0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         assert!(!is_written);
-        assert_eq!(upload.next_seq_to_send.to_u32(), 1);
+        assert_eq!(upload.swnd.end().to_u32(), 1);
 
         upload.set_remote_rwnd(10);
 
@@ -551,7 +531,7 @@ mod tests {
             }
             false => panic!(),
         }
-        assert_eq!(upload.next_seq_to_send.to_u32(), 2);
+        assert_eq!(upload.swnd.end().to_u32(), 2);
         packet.reset_data(0);
         assert!(!upload.append_packet_to_and_if_written(&mut packet));
     }
@@ -659,12 +639,12 @@ mod tests {
             }
             false => panic!(),
         }
-        assert_eq!(upload.next_seq_to_send.to_u32(), 1);
-        assert_eq!(upload.sending_queue.len(), 1);
+        assert_eq!(upload.swnd.end().to_u32(), 1);
+        assert_eq!(upload.swnd.size(), 1);
 
         upload.set_acked_local_seq(Seq::from_u32(0));
 
-        assert_eq!(upload.sending_queue.len(), 0);
+        assert_eq!(upload.swnd.size(), 0);
     }
 
     #[test]
@@ -716,6 +696,7 @@ mod tests {
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
             to_send_byte_capacity: usize::MAX,
+            swnd_size_cap: usize::MAX,
         }
         .build();
         upload.disable_rto = true;
@@ -765,6 +746,7 @@ mod tests {
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
             to_send_byte_capacity: usize::MAX,
+            swnd_size_cap: usize::MAX,
         }
         .build();
         upload.disable_rto = true;
@@ -818,6 +800,7 @@ mod tests {
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
             to_send_byte_capacity: usize::MAX,
+            swnd_size_cap: usize::MAX,
         }
         .build();
         upload.disable_rto = true;
@@ -884,6 +867,7 @@ mod tests {
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
             to_send_byte_capacity: usize::MAX,
+            swnd_size_cap: usize::MAX,
         }
         .build();
         upload.disable_rto = true;

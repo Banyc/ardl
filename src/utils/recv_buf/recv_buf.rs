@@ -12,7 +12,7 @@ pub struct RecvBuf<T> {
 
 impl<T> RecvBuf<T> {
     fn check_rep(&self) {
-        let ofo_len = self.rwnd.capacity();
+        let ofo_len = self.rwnd.size();
         assert_eq!(ofo_len + self.sorted.len(), self.len);
     }
 
@@ -65,12 +65,12 @@ impl<T> RecvBuf<T> {
 
     #[must_use]
     pub fn next_seq_to_receive(&self) -> Seq {
-        self.rwnd.next_seq_to_receive()
+        self.rwnd.start()
     }
 
     #[must_use]
     pub fn rwnd_capacity(&self) -> usize {
-        self.rwnd.capacity()
+        self.rwnd.size()
     }
 }
 

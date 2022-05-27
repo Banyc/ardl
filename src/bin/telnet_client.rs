@@ -18,10 +18,12 @@ use crate_yatcp::{
 const MTU: usize = PACKET_HDR_LEN + PUSH_HDR_LEN + 1;
 const FLUSH_INTERVAL_MS: u64 = 10;
 const STAT_INTERVAL_S: u64 = 1;
+const LISTEN_ADDR: &str = "0.0.0.0:19479";
 const LOCAL_RECV_BUF_LEN: usize = 2;
 const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 0;
 const RATIO_RTO_TO_ONE_RTT: f64 = 1.5;
 const TO_SEND_BYTE_CAPACITY: usize = 1024 * 64;
+const MAX_SWND_SIZE: usize = usize::MAX;
 
 fn main() {
     // socket
@@ -43,6 +45,7 @@ fn main() {
             NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
         ratio_rto_to_one_rtt: RATIO_RTO_TO_ONE_RTT,
         to_send_byte_capacity: TO_SEND_BYTE_CAPACITY,
+        swnd_size_cap: MAX_SWND_SIZE,
     }
     .build();
 

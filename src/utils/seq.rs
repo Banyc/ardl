@@ -19,6 +19,11 @@ impl Seq {
         Seq { n: s.0 }
     }
 
+    pub fn sub_seq(&self, other: Seq) -> u32 {
+        let s = Wrapping(self.n) - Wrapping(other.n);
+        s.0
+    }
+
     pub fn increment(&mut self) {
         *self = self.add_u32(1);
     }
@@ -107,5 +112,12 @@ mod tests {
         let mut a = Seq::from_u32(0);
         a.increment();
         assert_eq!(a.to_u32(), 1);
+    }
+
+    #[test]
+    fn sub_wraparound() {
+        let a = Seq::from_u32(0);
+        let b = Seq::from_u32(u32::MAX);
+        assert_eq!(a.sub_seq(b), 1);
     }
 }

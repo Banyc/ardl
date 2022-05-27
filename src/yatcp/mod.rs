@@ -17,6 +17,7 @@ pub struct YatcpBuilder {
     pub nack_duplicate_threshold_to_activate_fast_retransmit: usize,
     pub ratio_rto_to_one_rtt: f64,
     pub to_send_byte_capacity: usize,
+    pub swnd_size_cap: usize,
 }
 
 impl YatcpBuilder {
@@ -27,6 +28,7 @@ impl YatcpBuilder {
                 .nack_duplicate_threshold_to_activate_fast_retransmit,
             ratio_rto_to_one_rtt: self.ratio_rto_to_one_rtt,
             to_send_byte_capacity: self.to_send_byte_capacity,
+            swnd_size_cap: self.swnd_size_cap,
         }
         .build();
         let download = YatcpDownloadBuilder {
@@ -61,6 +63,7 @@ mod tests {
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
             to_send_byte_capacity: usize::MAX,
+            swnd_size_cap: usize::MAX,
         }
         .build();
         let (mut upload2, mut download2) = YatcpBuilder {
@@ -68,6 +71,7 @@ mod tests {
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
             to_send_byte_capacity: usize::MAX,
+            swnd_size_cap: usize::MAX,
         }
         .build();
 
@@ -122,6 +126,7 @@ mod tests {
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
             to_send_byte_capacity: usize::MAX,
+            swnd_size_cap: usize::MAX,
         }
         .build();
         let (mut upload2, mut download2) = YatcpBuilder {
@@ -129,6 +134,7 @@ mod tests {
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
             to_send_byte_capacity: usize::MAX,
+            swnd_size_cap: usize::MAX,
         }
         .build();
 
