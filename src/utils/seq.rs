@@ -120,4 +120,18 @@ mod tests {
         let b = Seq::from_u32(u32::MAX);
         assert_eq!(a.sub_seq(b), 1);
     }
+
+    #[test]
+    fn sub_zero() {
+        let a = Seq::from_u32(1);
+        let b = Seq::from_u32(1);
+        assert_eq!(a.sub_seq(b), 0);
+    }
+
+    #[test]
+    fn sub_wo_wraparound() {
+        let a = Seq::from_u32(3);
+        let b = Seq::from_u32(1);
+        assert_eq!(a.sub_seq(b), 2);
+    }
 }
