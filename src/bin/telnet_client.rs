@@ -18,8 +18,7 @@ use crate_yatcp::{
 const MTU: usize = PACKET_HDR_LEN + PUSH_HDR_LEN + 1;
 const FLUSH_INTERVAL_MS: u64 = 10;
 const STAT_INTERVAL_S: u64 = 1;
-const LISTEN_ADDR: &str = "0.0.0.0:19479";
-const MAX_LOCAL_RWND_LEN: usize = 2;
+const LOCAL_RECV_BUF_LEN: usize = 2;
 const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 0;
 const RATIO_RTO_TO_ONE_RTT: f64 = 1.5;
 const TO_SEND_BYTE_CAPACITY: usize = 1024 * 64;
@@ -39,7 +38,7 @@ fn main() {
 
     // yatcp
     let (yatcp_upload, yatcp_download) = YatcpBuilder {
-        max_local_receiving_queue_len: MAX_LOCAL_RWND_LEN,
+        local_recv_buf_len: LOCAL_RECV_BUF_LEN,
         nack_duplicate_threshold_to_activate_fast_retransmit:
             NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
         ratio_rto_to_one_rtt: RATIO_RTO_TO_ONE_RTT,

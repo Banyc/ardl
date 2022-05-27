@@ -13,7 +13,7 @@ pub mod yatcp_upload;
 pub struct SendError<T>(pub T);
 
 pub struct YatcpBuilder {
-    pub max_local_receiving_queue_len: usize,
+    pub local_recv_buf_len: usize,
     pub nack_duplicate_threshold_to_activate_fast_retransmit: usize,
     pub ratio_rto_to_one_rtt: f64,
     pub to_send_byte_capacity: usize,
@@ -22,7 +22,7 @@ pub struct YatcpBuilder {
 impl YatcpBuilder {
     pub fn build(self) -> (YatcpUpload, YatcpDownload) {
         let upload = YatcpUploadBuilder {
-            local_rwnd_capacity: self.max_local_receiving_queue_len,
+            local_recv_buf_len: self.local_recv_buf_len,
             nack_duplicate_threshold_to_activate_fast_retransmit: self
                 .nack_duplicate_threshold_to_activate_fast_retransmit,
             ratio_rto_to_one_rtt: self.ratio_rto_to_one_rtt,
@@ -30,7 +30,7 @@ impl YatcpBuilder {
         }
         .build();
         let download = YatcpDownloadBuilder {
-            recv_buf_len: self.max_local_receiving_queue_len,
+            recv_buf_len: self.local_recv_buf_len,
         }
         .build();
         (upload, download)
@@ -57,14 +57,14 @@ mod tests {
     #[test]
     fn test_few_1() {
         let (mut upload1, mut download1) = YatcpBuilder {
-            max_local_receiving_queue_len: 2,
+            local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
             to_send_byte_capacity: usize::MAX,
         }
         .build();
         let (mut upload2, mut download2) = YatcpBuilder {
-            max_local_receiving_queue_len: 2,
+            local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
             to_send_byte_capacity: usize::MAX,
@@ -118,14 +118,14 @@ mod tests {
     #[test]
     fn test_rto() {
         let (mut upload1, mut _download1) = YatcpBuilder {
-            max_local_receiving_queue_len: 2,
+            local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
             to_send_byte_capacity: usize::MAX,
         }
         .build();
         let (mut upload2, mut download2) = YatcpBuilder {
-            max_local_receiving_queue_len: 2,
+            local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
             to_send_byte_capacity: usize::MAX,
