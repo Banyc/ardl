@@ -6,7 +6,7 @@ use std::{
 };
 
 use ardl::{
-    layer::{Builder, Downloader, SetUploadState, Uploader},
+    layer::{Builder, Downloader, IObserver, SetUploadState, Uploader},
     protocol::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
     utils::buf::{BufSlice, BufWtr, OwnedBufWtr},
 };
@@ -19,7 +19,8 @@ const LISTEN_ADDR: &str = "0.0.0.0:19479";
 const LOCAL_RECV_BUF_LEN: usize = 2;
 const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 0;
 const RATIO_RTO_TO_ONE_RTT: f64 = 1.5;
-const TO_SEND_BYTE_CAP: usize = 1024 * 64;
+// const TO_SEND_BYTE_CAP: usize = 1024 * 64;
+const TO_SEND_BYTE_CAP: usize = 1;
 const SWND_SIZE_CAP: usize = usize::MAX;
 
 fn main() {
@@ -33,9 +34,10 @@ fn main() {
     let uploading_messaging_tx = Arc::new(uploading_messaging_tx);
     let (downloading_messaging_tx, downloading_messaging_rx) = mpsc::sync_channel(0);
     let downloading_messaging_tx = Arc::new(downloading_messaging_tx);
+    let (on_send_available_tx, on_send_available_rx) = mpsc::sync_channel(0);
 
     // layer
-    let (uploader, downloader) = Builder {
+    let (mut uploader, downloader) = Builder {
         local_recv_buf_len: LOCAL_RECV_BUF_LEN,
         nack_duplicate_threshold_to_activate_fast_retransmit:
             NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
@@ -44,6 +46,14 @@ fn main() {
         swnd_size_cap: SWND_SIZE_CAP,
     }
     .build();
+
+    // on send available
+    let observer = OnSendAvailable {
+        tx: on_send_available_tx,
+    };
+    let observer = Arc::new(observer);
+    let weak_observer = Arc::downgrade(&observer);
+    uploader.set_on_send_available(Some(weak_observer));
 
     // spawn threads
     let mut threads = Vec::new();
@@ -54,6 +64,7 @@ fn main() {
                 downloader,
                 downloading_messaging_rx,
                 uploading_messaging_tx1,
+                on_send_available_rx,
             )
         });
         threads.push(thread);
@@ -173,6 +184,7 @@ fn downloading(
     mut downloader: Downloader,
     messaging: mpsc::Receiver<DownloadingMessaging>,
     uploading_messaging_tx: Arc<mpsc::SyncSender<UploadingMessaging>>,
+    on_send_available_rx: mpsc::Receiver<()>,
 ) {
     let mut old_stat = None;
     loop {
@@ -198,7 +210,7 @@ fn downloading(
 
                     let slice = BufSlice::from_bytes(buf);
 
-                    block_sending(slice, &uploading_messaging_tx);
+                    block_sending(slice, &uploading_messaging_tx, &on_send_available_rx);
                 }
             }
             DownloadingMessaging::PrintStat => {
@@ -256,7 +268,11 @@ enum UploadingToSendResponse {
     Err(BufSlice),
 }
 
-fn block_sending(slice: BufSlice, uploading_messaging_tx: &mpsc::SyncSender<UploadingMessaging>) {
+fn block_sending(
+    slice: BufSlice,
+    uploading_messaging_tx: &mpsc::SyncSender<UploadingMessaging>,
+    on_send_available_rx: &mpsc::Receiver<()>,
+) {
     let mut some_slice = Some(slice);
     loop {
         let slice = some_slice.take().unwrap();
@@ -271,6 +287,18 @@ fn block_sending(slice: BufSlice, uploading_messaging_tx: &mpsc::SyncSender<Uplo
                 some_slice = Some(slice);
             }
         }
-        thread::sleep(Duration::from_millis(FLUSH_INTERVAL_MS * 3));
+        // println!("got blocked");
+        on_send_available_rx.recv().unwrap();
+        // println!("got unblocked");
+    }
+}
+
+struct OnSendAvailable {
+    tx: mpsc::SyncSender<()>,
+}
+
+impl IObserver for OnSendAvailable {
+    fn notify(&self) {
+        let _ = self.tx.try_send(());
     }
 }

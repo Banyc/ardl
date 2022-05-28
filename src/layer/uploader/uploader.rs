@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    sync::Weak,
     time::{self, Duration},
 };
 
@@ -14,7 +15,10 @@ use crate::{
     },
 };
 
-use super::{super::SetUploadState, SendingFrag};
+use super::{
+    super::{IObserver, SetUploadState},
+    SendingFrag,
+};
 
 const ALPHA: f64 = 1.0 / 8.0;
 const MAX_RTO_MS: u64 = 60_000;
@@ -43,6 +47,9 @@ pub struct Uploader {
 
     // unit tests
     disable_rto: bool,
+
+    // observer
+    on_send_available: Option<Weak<dyn IObserver + Send + Sync + 'static>>,
 }
 
 pub struct UploaderBuilder {
@@ -75,6 +82,7 @@ impl UploaderBuilder {
             ),
             ratio_rto_to_one_rtt: self.ratio_rto_to_one_rtt,
             disable_rto: false,
+            on_send_available: None,
         };
         this.check_rep();
         this
@@ -122,6 +130,13 @@ impl Uploader {
         }
     }
 
+    pub fn set_on_send_available(
+        &mut self,
+        observer: Option<Weak<dyn IObserver + Send + Sync + 'static>>,
+    ) {
+        self.on_send_available = observer;
+    }
+
     pub fn to_send(&mut self, slice: buf::BufSlice) -> Result<(), SendError<buf::BufSlice>> {
         match self.to_send_queue.push_back(slice) {
             Ok(_) => Ok(()),
@@ -130,11 +145,21 @@ impl Uploader {
     }
 
     pub fn output_packet(&mut self, wtr: &mut impl BufWtr) -> Result<(), OutputError> {
+        let is_then_full = self.to_send_queue.is_full();
         let result = self.append_packet_to(wtr);
-        // if result.is_ok() {
-        //     // callback when `to_send` is not full
-        //     // TODO
-        // }
+        if result.is_ok() {
+            // callback when `to_send` is not full
+            if let Some(x) = &self.on_send_available {
+                let is_now_full = self.to_send_queue.is_full();
+                match (is_then_full, is_now_full) {
+                    (true, false) => match x.upgrade() {
+                        Some(x) => x.notify(),
+                        None => (),
+                    },
+                    _ => (),
+                }
+            }
+        }
         self.check_rep();
         result
     }

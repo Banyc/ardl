@@ -4,6 +4,8 @@ mod downloader;
 pub use downloader::*;
 mod uploader;
 pub use uploader::*;
+mod observer;
+pub use observer::*;
 
 pub struct Builder {
     pub local_recv_buf_len: usize,
