@@ -2,7 +2,10 @@ use std::io;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
-use crate::utils::{self, BufWtr, Seq};
+use crate::utils::{
+    buf::{self, BufWtr},
+    Seq,
+};
 
 pub const PACKET_HDR_LEN: usize = 6;
 
@@ -51,7 +54,7 @@ impl PacketHeader {
         Ok(this)
     }
 
-    pub fn prepend_to(&self, buf: &mut utils::OwnedBufWtr) -> Result<(), Error> {
+    pub fn prepend_to(&self, buf: &mut buf::OwnedBufWtr) -> Result<(), Error> {
         let hdr = self.to_bytes();
         buf.prepend(&hdr).map_err(|_e| Error::NotEnoughSpace)?;
         Ok(())
@@ -80,7 +83,7 @@ impl PacketHeader {
 mod tests {
     use std::io::Cursor;
 
-    use crate::utils::{BufWtr, OwnedBufWtr};
+    use crate::utils::buf::{BufWtr, OwnedBufWtr};
 
     use super::*;
 

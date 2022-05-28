@@ -8,10 +8,13 @@ use crate::{
         frag_hdr::{FragCommand, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN},
         packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
-    utils::{self, BufPasta, BufSlicer, BufWtr, FastRetransmissionWnd, Seq, SubBufWtr, Swnd},
+    utils::{
+        buf::{self, BufPasta, BufSlicer, BufWtr, SubBufWtr},
+        FastRetransmissionWnd, Seq, Swnd,
+    },
 };
 
-use super::{sending_frag::SendingFrag, SetUploadState};
+use super::{super::SetUploadState, SendingFrag};
 
 const ALPHA: f64 = 1.0 / 8.0;
 const MAX_RTO_MS: u64 = 60_000;
@@ -23,7 +26,7 @@ static MIN_RTO: time::Duration = Duration::from_millis(MIN_RTO_MS);
 
 pub struct Uploader {
     // modified by `append_frags_to`
-    to_send_queue: utils::BufSlicer,
+    to_send_queue: buf::BufSlicer,
     swnd: Swnd<SendingFrag>,
     to_ack_queue: VecDeque<Seq>,
 
@@ -112,7 +115,7 @@ impl Uploader {
         }
     }
 
-    pub fn to_send(&mut self, rdr: utils::BufRdr) -> Result<(), utils::PushError<utils::BufRdr>> {
+    pub fn to_send(&mut self, rdr: buf::BufRdr) -> Result<(), buf::PushError<buf::BufRdr>> {
         self.to_send_queue.push_back(rdr)
     }
 
@@ -402,7 +405,10 @@ mod tests {
     use crate::{
         layer::{uploader::UploaderBuilder, SetUploadState},
         protocol::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
-        utils::{BufRdr, BufWtr, OwnedBufWtr, Seq},
+        utils::{
+            buf::{BufRdr, BufWtr, OwnedBufWtr},
+            Seq,
+        },
     };
 
     const MTU: usize = 512;

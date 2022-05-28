@@ -3,7 +3,10 @@ use crate::{
         frag_hdr::{FragCommand, FragHeader},
         packet_hdr::PacketHeader,
     },
-    utils::{self, BufFrag, RecvBuf, Seq, SeqLocationToRwnd},
+    utils::{
+        buf::{self, BufFrag},
+        RecvBuf, Seq, SeqLocationToRwnd,
+    },
 };
 
 use super::SetUploadState;
@@ -95,7 +98,7 @@ impl Downloader {
     }
 
     #[must_use]
-    pub fn input_packet(&mut self, mut rdr: utils::BufRdr) -> Result<SetUploadState, Error> {
+    pub fn input_packet(&mut self, mut rdr: buf::BufRdr) -> Result<SetUploadState, Error> {
         let partial_state_changes = self.handle_packet(&mut rdr)?;
         let state_changes = SetUploadState {
             remote_rwnd_size: partial_state_changes.remote_rwnd,
@@ -109,10 +112,7 @@ impl Downloader {
     }
 
     #[must_use]
-    fn handle_packet(
-        &mut self,
-        rdr: &mut utils::BufRdr,
-    ) -> Result<HandlePacketStateChanges, Error> {
+    fn handle_packet(&mut self, rdr: &mut buf::BufRdr) -> Result<HandlePacketStateChanges, Error> {
         let mut cursor = rdr.get_peek_cursor();
         let hdr = match PacketHeader::from_bytes(&mut cursor) {
             Ok(x) => x,
@@ -136,7 +136,7 @@ impl Downloader {
     }
 
     #[must_use]
-    fn handle_frags(&mut self, rdr: &mut utils::BufRdr) -> HandleFragsStateChanges {
+    fn handle_frags(&mut self, rdr: &mut buf::BufRdr) -> HandleFragsStateChanges {
         let mut remote_seqs_to_ack = Vec::new();
         let mut acked_local_seqs = Vec::new();
         loop {
@@ -255,7 +255,7 @@ mod tests {
             frag_hdr::{FragCommand, FragHeaderBuilder},
             packet_hdr::PacketHeaderBuilder,
         },
-        utils::{BufRdr, Seq},
+        utils::{buf::BufRdr, Seq},
     };
 
     use super::DownloaderBuilder;

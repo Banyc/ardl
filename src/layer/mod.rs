@@ -6,7 +6,6 @@ use self::{
 };
 
 pub mod downloader;
-mod sending_frag;
 pub mod uploader;
 
 pub struct LayerBuilder {
@@ -49,7 +48,7 @@ pub struct SetUploadState {
 mod tests {
     use std::thread;
 
-    use crate::utils::{BufRdr, BufWtr, OwnedBufWtr};
+    use crate::utils::buf::{BufRdr, BufWtr, OwnedBufWtr};
 
     use super::LayerBuilder;
 

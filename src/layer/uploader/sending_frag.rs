@@ -1,6 +1,6 @@
 use std::time::{self, Instant};
 
-use crate::utils::BufPasta;
+use crate::utils::buf::BufPasta;
 
 pub struct SendingFrag {
     body: BufPasta,

@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 
-use crate::utils;
+use super::{BufFrag, BufRdr};
 
 pub struct BufSlicer {
-    queue: VecDeque<utils::BufRdr>,
+    queue: VecDeque<BufRdr>,
     byte_len: usize,
     byte_cap: usize,
 }
@@ -28,7 +28,7 @@ impl BufSlicer {
         this
     }
 
-    pub fn push_back(&mut self, rdr: utils::BufRdr) -> Result<(), PushError<utils::BufRdr>> {
+    pub fn push_back(&mut self, rdr: BufRdr) -> Result<(), PushError<BufRdr>> {
         let rdr_len = rdr.len();
         if !(self.byte_len + rdr_len <= self.byte_cap) {
             return Err(PushError(rdr));
@@ -43,7 +43,7 @@ impl BufSlicer {
         Ok(())
     }
 
-    pub fn slice_front(&mut self, max_len: usize) -> utils::BufFrag {
+    pub fn slice_front(&mut self, max_len: usize) -> BufFrag {
         let mut rdr = self.queue.pop_front().unwrap();
         let buf = rdr.try_slice(max_len).unwrap();
         self.byte_len -= buf.len();
@@ -61,7 +61,7 @@ impl BufSlicer {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::BufRdr;
+    use super::BufRdr;
 
     use super::BufSlicer;
 

@@ -1,5 +1,4 @@
-mod buf;
-pub use buf::*;
+pub mod buf;
 mod seq;
 pub use seq::*;
 mod fast_retransmit;

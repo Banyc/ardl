@@ -9,7 +9,7 @@ use std::{
 use crate_yatcp::{
     layer::{downloader::Downloader, uploader::Uploader, LayerBuilder, SetUploadState},
     protocol::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
-    utils::{BufRdr, BufWtr, OwnedBufWtr},
+    utils::buf::{BufRdr, BufWtr, OwnedBufWtr},
 };
 
 // const MTU: usize = 512;
