@@ -1,10 +1,12 @@
+use std::io::Cursor;
+
 use crate::{
     protocol::{
         frag_hdr::{FragCommand, FragHeader},
         packet_hdr::PacketHeader,
     },
     utils::{
-        buf::{self, BufFrag},
+        buf::{self, BufSlice},
         RecvBuf, Seq, SeqLocationToRwnd,
     },
 };
@@ -12,8 +14,8 @@ use crate::{
 use super::SetUploadState;
 
 pub struct Downloader {
-    recv_buf: RecvBuf<BufFrag>,
-    leftover: Option<BufFrag>,
+    recv_buf: RecvBuf<BufSlice>,
+    leftover: Option<BufSlice>,
     stat: LocalStat,
 }
 
@@ -65,14 +67,14 @@ impl Downloader {
     }
 
     #[must_use]
-    pub fn recv(&mut self) -> Option<BufFrag> {
+    pub fn recv(&mut self) -> Option<BufSlice> {
         let received = self.recv_buf.pop_front();
         self.check_rep();
         received
     }
 
     #[must_use]
-    pub fn recv_max(&mut self, max_len: usize) -> Option<BufFrag> {
+    pub fn recv_max(&mut self, max_len: usize) -> Option<BufSlice> {
         let leftover = self.leftover.take();
         let frag = if let Some(frag) = leftover {
             frag
@@ -113,7 +115,7 @@ impl Downloader {
 
     #[must_use]
     fn handle_packet(&mut self, rdr: &mut buf::BufRdr) -> Result<HandlePacketStateChanges, Error> {
-        let mut cursor = rdr.get_peek_cursor();
+        let mut cursor = Cursor::new(rdr.data());
         let hdr = match PacketHeader::from_bytes(&mut cursor) {
             Ok(x) => x,
             Err(_) => {
@@ -123,7 +125,7 @@ impl Downloader {
         };
         let read_len = cursor.position();
         drop(cursor);
-        rdr.skip(read_len as usize).unwrap();
+        rdr.skip_precisely(read_len as usize).unwrap();
 
         let partial_state_changes = self.handle_frags(rdr);
         let state_changes = HandlePacketStateChanges {
@@ -144,7 +146,7 @@ impl Downloader {
                 break;
             }
 
-            let mut cursor = rdr.get_peek_cursor();
+            let mut cursor = Cursor::new(rdr.data());
             let hdr = match FragHeader::from_bytes(&mut cursor) {
                 Ok(x) => x,
                 // TODO: review
@@ -156,7 +158,7 @@ impl Downloader {
             };
             let read_len = cursor.position();
             drop(cursor);
-            rdr.skip(read_len as usize).unwrap();
+            rdr.skip_precisely(read_len as usize).unwrap();
 
             match hdr.cmd() {
                 FragCommand::Push { len } => {
@@ -166,10 +168,10 @@ impl Downloader {
                         self.stat.decoding_errors += 1;
                         break;
                     }
-                    let body = match rdr.try_slice(*len as usize) {
-                        Some(x) => x,
+                    let body = match rdr.take_precisely(*len as usize) {
+                        Ok(x) => x,
                         // no transactions are happening => no need to compensate
-                        None => {
+                        Err(_) => {
                             self.stat.decoding_errors += 1;
                             break;
                         }
@@ -255,7 +257,10 @@ mod tests {
             frag_hdr::{FragCommand, FragHeaderBuilder},
             packet_hdr::PacketHeaderBuilder,
         },
-        utils::{buf::BufRdr, Seq},
+        utils::{
+            buf::{BufRdr, BufSlice},
+            Seq,
+        },
     };
 
     use super::DownloaderBuilder;
@@ -265,8 +270,8 @@ mod tests {
         let mut download = DownloaderBuilder { recv_buf_len: 3 }.build();
 
         let origin1 = vec![];
-        let rdr = BufRdr::from_bytes(origin1);
-        let changes = download.input_packet(rdr);
+        let slice = BufSlice::from_bytes(origin1);
+        let changes = download.input_packet(BufRdr::from_slice(slice));
         assert!(changes.is_err());
     }
 
@@ -294,8 +299,8 @@ mod tests {
 
         // [packet_header] [push_hdr seq(0)] [11]
 
-        let rdr = BufRdr::from_bytes(buf);
-        let changes = download.input_packet(rdr).unwrap();
+        let slice = BufSlice::from_bytes(buf);
+        let changes = download.input_packet(BufRdr::from_slice(slice)).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 1);
         assert_eq!(changes.local_rwnd_size, 2);
         assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -330,8 +335,8 @@ mod tests {
 
         // [packet_header] [push_hdr seq(1)] [11]
 
-        let rdr = BufRdr::from_bytes(buf);
-        let changes = download.input_packet(rdr).unwrap();
+        let slice = BufSlice::from_bytes(buf);
+        let changes = download.input_packet(BufRdr::from_slice(slice)).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(changes.local_rwnd_size, 3);
         assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -364,8 +369,8 @@ mod tests {
         buf.append(&mut push_hdr1.to_bytes());
         buf.append(&mut push_body1);
 
-        let rdr = BufRdr::from_bytes(buf);
-        let changes = download.input_packet(rdr).unwrap();
+        let slice = BufSlice::from_bytes(buf);
+        let changes = download.input_packet(BufRdr::from_slice(slice)).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(changes.local_rwnd_size, 3);
         assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -411,8 +416,8 @@ mod tests {
         buf.append(&mut push_hdr1.to_bytes());
         buf.append(&mut push_body1);
 
-        let rdr = BufRdr::from_bytes(buf);
-        let changes = download.input_packet(rdr).unwrap();
+        let slice = BufSlice::from_bytes(buf);
+        let changes = download.input_packet(BufRdr::from_slice(slice)).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(changes.local_rwnd_size, 3);
         assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -461,8 +466,8 @@ mod tests {
 
             // [packet_header] [push_hdr seq(1)] [1] [push_hdr seq(2)] [2]
 
-            let rdr = BufRdr::from_bytes(buf);
-            let changes = download.input_packet(rdr).unwrap();
+            let slice = BufSlice::from_bytes(buf);
+            let changes = download.input_packet(BufRdr::from_slice(slice)).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
             assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -506,8 +511,8 @@ mod tests {
 
             // [packet_header] [push_hdr seq(0)] [1] [push_hdr seq(3)] [3]
 
-            let rdr = BufRdr::from_bytes(buf);
-            let changes = download.input_packet(rdr).unwrap();
+            let slice = BufSlice::from_bytes(buf);
+            let changes = download.input_packet(BufRdr::from_slice(slice)).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 2);
             assert_eq!(changes.local_rwnd_size, 0);
             assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -541,8 +546,8 @@ mod tests {
 
             // [packet_header] [push_hdr seq(2)] [2]
 
-            let rdr = BufRdr::from_bytes(buf);
-            let changes = download.input_packet(rdr).unwrap();
+            let slice = BufSlice::from_bytes(buf);
+            let changes = download.input_packet(BufRdr::from_slice(slice)).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 3);
             assert_eq!(changes.local_rwnd_size, 1);
             assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -577,8 +582,8 @@ mod tests {
 
             // [packet_header] [push_hdr seq(0)] [2]
 
-            let rdr = BufRdr::from_bytes(buf);
-            let changes = download.input_packet(rdr).unwrap();
+            let slice = BufSlice::from_bytes(buf);
+            let changes = download.input_packet(BufRdr::from_slice(slice)).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 3);
             assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -618,8 +623,8 @@ mod tests {
         // [packet_header] [push_hdr seq(0)] [4]
 
         {
-            let rdr = BufRdr::from_bytes(buf);
-            let changes = download.input_packet(rdr).unwrap();
+            let slice = BufSlice::from_bytes(buf);
+            let changes = download.input_packet(BufRdr::from_slice(slice)).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 1);
             assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);

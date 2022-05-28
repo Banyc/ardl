@@ -9,7 +9,7 @@ use std::{
 use ardl::{
     layer::{Builder, Downloader, SetUploadState, Uploader},
     protocol::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
-    utils::buf::{BufRdr, BufWtr, OwnedBufWtr},
+    utils::buf::{BufRdr, BufSlice, BufWtr, OwnedBufWtr},
 };
 
 // const MTU: usize = 512;
@@ -20,7 +20,7 @@ const LISTEN_ADDR: &str = "0.0.0.0:19479";
 const LOCAL_RECV_BUF_LEN: usize = 2;
 const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 0;
 const RATIO_RTO_TO_ONE_RTT: f64 = 1.5;
-const TO_SEND_BYTE_CAP: usize = 1024 * 64;
+const TO_SEND_QUEUE_LEN_CAP: usize = 1024 * 64;
 const MAX_SWND_SIZE: usize = usize::MAX;
 
 fn main() {
@@ -42,7 +42,7 @@ fn main() {
         nack_duplicate_threshold_to_activate_fast_retransmit:
             NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
         ratio_rto_to_one_rtt: RATIO_RTO_TO_ONE_RTT,
-        to_send_queue_byte_cap: TO_SEND_BYTE_CAP,
+        to_send_queue_len_cap: TO_SEND_QUEUE_LEN_CAP,
         swnd_size_cap: MAX_SWND_SIZE,
     }
     .build();
@@ -96,9 +96,9 @@ fn main() {
         let bytes = text.into_bytes();
         let byte_len = bytes.len();
         let wtr = OwnedBufWtr::from_bytes(bytes, 0, byte_len);
-        let rdr = BufRdr::from_wtr(wtr);
+        let slice = BufSlice::from_wtr(wtr);
 
-        block_sending(rdr, &uploading_messaging_tx);
+        block_sending(slice, &uploading_messaging_tx);
     }
 }
 
@@ -236,7 +236,7 @@ fn socket_recving(
 enum UploadingMessaging {
     SetUploadStates(SetUploadState),
     Flush,
-    ToSend(BufRdr, mpsc::SyncSender<UploadingToSendResponse>),
+    ToSend(BufSlice, mpsc::SyncSender<UploadingToSendResponse>),
     PrintStat,
 }
 
@@ -247,22 +247,22 @@ enum DownloadingMessaging {
 
 enum UploadingToSendResponse {
     Ok,
-    Err(BufRdr),
+    Err(BufSlice),
 }
 
-fn block_sending(rdr: BufRdr, uploading_messaging_tx: &mpsc::SyncSender<UploadingMessaging>) {
-    let mut some_rdr = Some(rdr);
+fn block_sending(slice: BufSlice, uploading_messaging_tx: &mpsc::SyncSender<UploadingMessaging>) {
+    let mut some_slice = Some(slice);
     loop {
-        let rdr = some_rdr.take().unwrap();
+        let slice = some_slice.take().unwrap();
         let (responser, receiver) = mpsc::sync_channel(1);
         uploading_messaging_tx
-            .send(UploadingMessaging::ToSend(rdr, responser))
+            .send(UploadingMessaging::ToSend(slice, responser))
             .unwrap();
         let res = receiver.recv().unwrap();
         match res {
             UploadingToSendResponse::Ok => break,
-            UploadingToSendResponse::Err(rdr) => {
-                some_rdr = Some(rdr);
+            UploadingToSendResponse::Err(slice) => {
+                some_slice = Some(slice);
             }
         }
         thread::sleep(Duration::from_millis(FLUSH_INTERVAL_MS * 3));

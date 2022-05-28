@@ -1,89 +1,96 @@
 use std::collections::VecDeque;
 
-use super::{BufFrag, BufRdr};
+use super::BufSlice;
 
 pub struct BufSlicer {
-    queue: VecDeque<BufRdr>,
-    byte_len: usize,
-    byte_cap: usize,
+    queue: VecDeque<BufSlice>,
+    len_cap: usize,
 }
-
-pub struct PushError<T>(pub T);
 
 impl BufSlicer {
     fn check_rep(&self) {
-        assert!(self.byte_len <= self.byte_cap);
-        if !self.queue.is_empty() {
-            assert!(!self.queue.front().unwrap().is_empty());
+        assert!(self.queue.len() <= self.len_cap);
+        for slice in &self.queue {
+            assert!(!slice.is_empty());
         }
     }
 
-    pub fn new(byte_cap: usize) -> Self {
+    pub fn new(len_cap: usize) -> Self {
         let this = BufSlicer {
             queue: VecDeque::new(),
-            byte_len: 0,
-            byte_cap,
+            len_cap,
         };
         this.check_rep();
         this
     }
 
-    pub fn push_back(&mut self, rdr: BufRdr) -> Result<(), PushError<BufRdr>> {
-        let rdr_len = rdr.len();
-        if !(self.byte_len + rdr_len <= self.byte_cap) {
-            return Err(PushError(rdr));
+    pub fn push_back(&mut self, slice: BufSlice) -> Result<(), PushError<BufSlice>> {
+        if self.is_full() {
+            return Err(PushError(slice));
         }
-        if rdr.is_empty() {
+        if slice.is_empty() {
             return Ok(());
         }
 
-        self.byte_len += rdr_len;
-        self.queue.push_back(rdr);
+        self.queue.push_back(slice);
         self.check_rep();
         Ok(())
     }
 
-    pub fn slice_front(&mut self, max_len: usize) -> BufFrag {
-        let mut rdr = self.queue.pop_front().unwrap();
-        let buf = rdr.try_slice(max_len).unwrap();
-        self.byte_len -= buf.len();
-        if !rdr.is_empty() {
-            self.queue.push_front(rdr);
+    pub fn slice_front(&mut self, max_len: usize) -> Result<BufSlice, Error> {
+        let slice = match self.queue.pop_front() {
+            Some(x) => x,
+            None => return Err(Error::NothingToSlice),
+        };
+        if slice.len() <= max_len {
+            self.check_rep();
+            Ok(slice)
+        } else {
+            let (head, tail) = slice.split(max_len).unwrap();
+            self.queue.push_front(tail);
+            self.check_rep();
+            Ok(head)
         }
-        self.check_rep();
-        buf
     }
 
     pub fn is_empty(&self) -> bool {
         self.queue.is_empty()
     }
+
+    pub fn is_full(&self) -> bool {
+        self.queue.len() == self.len_cap
+    }
 }
+
+#[derive(Debug)]
+pub enum Error {
+    NothingToSlice,
+}
+
+pub struct PushError<T>(pub T);
 
 #[cfg(test)]
 mod tests {
-    use super::BufRdr;
-
-    use super::BufSlicer;
+    use super::*;
 
     #[test]
     fn test1() {
-        let mut slicer = BufSlicer::new(3);
+        let mut slicer = BufSlicer::new(2);
 
-        let rdr1 = BufRdr::from_bytes(vec![0]);
-        let rdr2 = BufRdr::from_bytes(vec![1, 2]);
-        let rdr3 = BufRdr::from_bytes(vec![3]);
+        let slice1 = BufSlice::from_bytes(vec![0]);
+        let slice2 = BufSlice::from_bytes(vec![1, 2]);
 
-        slicer.push_back(rdr1).map_err(|_| ()).unwrap();
-        slicer.push_back(rdr2).map_err(|_| ()).unwrap();
-        assert!(slicer.push_back(rdr3).is_err());
+        slicer.push_back(slice1).map_err(|_| ()).unwrap();
+        slicer.push_back(slice2).map_err(|_| ()).unwrap();
+        assert!(slicer.is_full());
 
-        let slice1 = slicer.slice_front(2);
+        let slice1 = slicer.slice_front(2).unwrap();
         assert_eq!(slice1.data(), vec![0]);
 
-        let slice2 = slicer.slice_front(1);
+        let slice2 = slicer.slice_front(1).unwrap();
         assert_eq!(slice2.data(), vec![1]);
 
-        let slice3 = slicer.slice_front(2);
+        let slice3 = slicer.slice_front(2).unwrap();
         assert_eq!(slice3.data(), vec![2]);
 
         assert!(slicer.is_empty());

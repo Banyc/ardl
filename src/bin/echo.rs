@@ -8,7 +8,7 @@ use std::{
 use ardl::{
     layer::{Builder, Downloader, SetUploadState, Uploader},
     protocol::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
-    utils::buf::{BufRdr, BufWtr, OwnedBufWtr},
+    utils::buf::{BufRdr, BufSlice, BufWtr, OwnedBufWtr},
 };
 
 // const MTU: usize = 512;
@@ -40,7 +40,7 @@ fn main() {
         nack_duplicate_threshold_to_activate_fast_retransmit:
             NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
         ratio_rto_to_one_rtt: RATIO_RTO_TO_ONE_RTT,
-        to_send_queue_byte_cap: TO_SEND_BYTE_CAP,
+        to_send_queue_len_cap: TO_SEND_BYTE_CAP,
         swnd_size_cap: SWND_SIZE_CAP,
     }
     .build();
@@ -145,7 +145,7 @@ fn uploading(
                     listener.send_to(wtr.data(), remote_addr_.unwrap()).unwrap();
                 }
             }
-            UploadingMessaging::ToSend(rdr, responser) => match upload.to_send(rdr) {
+            UploadingMessaging::ToSend(slice, responser) => match upload.to_send(slice) {
                 Ok(()) => responser.send(UploadingToSendResponse::Ok).unwrap(),
                 Err(e) => responser.send(UploadingToSendResponse::Err(e.0)).unwrap(),
             },
@@ -196,8 +196,9 @@ fn downloading(
                 if !buf.is_empty() {
                     println!("{}, {:X?}", String::from_utf8_lossy(&buf), buf);
 
-                    let rdr = BufRdr::from_bytes(buf);
-                    block_sending(rdr, &uploading_messaging_tx);
+                    let slice = BufSlice::from_bytes(buf);
+
+                    block_sending(slice, &uploading_messaging_tx);
                 }
             }
             DownloadingMessaging::PrintStat => {
@@ -240,7 +241,7 @@ fn socket_recving(
 enum UploadingMessaging {
     SetUploadState(SetUploadState),
     Flush,
-    ToSend(BufRdr, mpsc::SyncSender<UploadingToSendResponse>),
+    ToSend(BufSlice, mpsc::SyncSender<UploadingToSendResponse>),
     PrintStat,
     SetRemoteAddr(SocketAddr),
 }
@@ -252,22 +253,22 @@ enum DownloadingMessaging {
 
 enum UploadingToSendResponse {
     Ok,
-    Err(BufRdr),
+    Err(BufSlice),
 }
 
-fn block_sending(rdr: BufRdr, uploading_messaging_tx: &mpsc::SyncSender<UploadingMessaging>) {
-    let mut some_rdr = Some(rdr);
+fn block_sending(slice: BufSlice, uploading_messaging_tx: &mpsc::SyncSender<UploadingMessaging>) {
+    let mut some_slice = Some(slice);
     loop {
-        let rdr = some_rdr.take().unwrap();
+        let slice = some_slice.take().unwrap();
         let (responser, receiver) = mpsc::sync_channel(1);
         uploading_messaging_tx
-            .send(UploadingMessaging::ToSend(rdr, responser))
+            .send(UploadingMessaging::ToSend(slice, responser))
             .unwrap();
         let res = receiver.recv().unwrap();
         match res {
             UploadingToSendResponse::Ok => break,
-            UploadingToSendResponse::Err(rdr) => {
-                some_rdr = Some(rdr);
+            UploadingToSendResponse::Err(slice) => {
+                some_slice = Some(slice);
             }
         }
         thread::sleep(Duration::from_millis(FLUSH_INTERVAL_MS * 3));

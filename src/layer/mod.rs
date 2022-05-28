@@ -9,7 +9,7 @@ pub struct Builder {
     pub local_recv_buf_len: usize,
     pub nack_duplicate_threshold_to_activate_fast_retransmit: usize,
     pub ratio_rto_to_one_rtt: f64,
-    pub to_send_queue_byte_cap: usize,
+    pub to_send_queue_len_cap: usize,
     pub swnd_size_cap: usize,
 }
 
@@ -20,7 +20,7 @@ impl Builder {
             nack_duplicate_threshold_to_activate_fast_retransmit: self
                 .nack_duplicate_threshold_to_activate_fast_retransmit,
             ratio_rto_to_one_rtt: self.ratio_rto_to_one_rtt,
-            to_send_queue_byte_cap: self.to_send_queue_byte_cap,
+            to_send_queue_len_cap: self.to_send_queue_len_cap,
             swnd_size_cap: self.swnd_size_cap,
         }
         .build();
@@ -45,7 +45,7 @@ pub struct SetUploadState {
 mod tests {
     use std::thread;
 
-    use crate::utils::buf::{BufRdr, BufWtr, OwnedBufWtr};
+    use crate::utils::buf::{BufRdr, BufSlice, BufWtr, OwnedBufWtr};
 
     use super::Builder;
 
@@ -55,7 +55,7 @@ mod tests {
             local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_queue_byte_cap: usize::MAX,
+            to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
@@ -63,7 +63,7 @@ mod tests {
             local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_queue_byte_cap: usize::MAX,
+            to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
@@ -71,8 +71,8 @@ mod tests {
         // push: 1 -> 2
         {
             let buf = vec![0, 1, 2];
-            let rdr = BufRdr::from_bytes(buf);
-            upload1.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(buf);
+            upload1.to_send(slice).map_err(|_| ()).unwrap();
 
             let mut inflight = OwnedBufWtr::new(1024, 0);
             upload1.output_packet(&mut inflight).unwrap();
@@ -116,7 +116,7 @@ mod tests {
             local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_queue_byte_cap: usize::MAX,
+            to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
@@ -124,7 +124,7 @@ mod tests {
             local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_queue_byte_cap: usize::MAX,
+            to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
@@ -132,8 +132,8 @@ mod tests {
         // push: 1 -> 2
         {
             let buf = vec![0, 1, 2];
-            let rdr = BufRdr::from_bytes(buf);
-            upload1.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(buf);
+            upload1.to_send(slice).map_err(|_| ()).unwrap();
 
             let mut inflight = OwnedBufWtr::new(1024, 0);
             upload1.output_packet(&mut inflight).unwrap();

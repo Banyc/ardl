@@ -1,7 +1,7 @@
-use super::{BufFrag, BufWtr, OwnedBufWtr};
+use super::{BufSlice, BufWtr, OwnedBufWtr};
 
 pub struct BufPasta {
-    frags: Vec<BufFrag>,
+    slices: Vec<BufSlice>,
     len: usize,
 }
 
@@ -14,7 +14,7 @@ impl BufPasta {
     #[inline]
     fn check_rep(&self) {
         let mut cum_len = 0;
-        for frag in &self.frags {
+        for frag in &self.slices {
             cum_len += frag.data().len();
         }
         assert_eq!(cum_len, self.len);
@@ -22,7 +22,7 @@ impl BufPasta {
 
     pub fn new() -> Self {
         let this = BufPasta {
-            frags: Vec::new(),
+            slices: Vec::new(),
             len: 0,
         };
         this.check_rep();
@@ -33,9 +33,9 @@ impl BufPasta {
         self.len
     }
 
-    pub fn append(&mut self, frag: BufFrag) {
+    pub fn append(&mut self, frag: BufSlice) {
         self.len += frag.data().len();
-        self.frags.push(frag);
+        self.slices.push(frag);
         self.check_rep();
     }
 
@@ -43,7 +43,7 @@ impl BufPasta {
         if wtr.back_len() < self.len {
             return Err(Error::NotEnoughSpace);
         }
-        for frag in &self.frags {
+        for frag in &self.slices {
             wtr.append(frag.data()).unwrap();
         }
         Ok(())
@@ -53,7 +53,7 @@ impl BufPasta {
         if wtr.front_len() < self.len {
             return Err(Error::NotEnoughSpace);
         }
-        for frag in &self.frags {
+        for frag in &self.slices {
             wtr.prepend(frag.data()).unwrap();
         }
         Ok(())
@@ -62,7 +62,7 @@ impl BufPasta {
 
 #[cfg(test)]
 mod tests {
-    use super::super::BufRdr;
+    use crate::utils::buf::BufSlice;
 
     use super::{BufWtr, OwnedBufWtr};
 
@@ -78,15 +78,15 @@ mod tests {
         let origin2 = vec![4];
         let mut wtr2 = OwnedBufWtr::new(1024, 512);
         wtr2.append(&origin2).unwrap();
-        let mut rdr1 = BufRdr::from_wtr(wtr1);
-        let mut rdr2 = BufRdr::from_wtr(wtr2);
+        let slice1 = BufSlice::from_wtr(wtr1);
+        let slice2 = BufSlice::from_wtr(wtr2);
 
         assert_eq!(pasta.len(), 0);
-        pasta.append(rdr1.try_slice(2).unwrap());
+        pasta.append(slice1.slice(0..2).unwrap());
         assert_eq!(pasta.len(), 2);
-        pasta.append(rdr2.try_slice(2).unwrap());
+        pasta.append(slice2.slice(0..1).unwrap());
         assert_eq!(pasta.len(), 3);
-        pasta.append(rdr1.try_slice(2).unwrap());
+        pasta.append(slice1.slice(2..4).unwrap());
         assert_eq!(pasta.len(), 5);
 
         pasta.append_to(&mut wtr).unwrap();

@@ -49,7 +49,7 @@ pub struct UploaderBuilder {
     pub local_recv_buf_len: usize,
     pub nack_duplicate_threshold_to_activate_fast_retransmit: usize,
     pub ratio_rto_to_one_rtt: f64,
-    pub to_send_queue_byte_cap: usize,
+    pub to_send_queue_len_cap: usize,
     pub swnd_size_cap: usize,
 }
 
@@ -57,7 +57,7 @@ impl UploaderBuilder {
     #[must_use]
     pub fn build(self) -> Uploader {
         let this = Uploader {
-            to_send_queue: BufSlicer::new(self.to_send_queue_byte_cap),
+            to_send_queue: BufSlicer::new(self.to_send_queue_len_cap),
             swnd: Swnd::new(self.swnd_size_cap),
             to_ack_queue: VecDeque::new(),
             local_rwnd_size: self.local_recv_buf_len,
@@ -86,7 +86,7 @@ impl UploaderBuilder {
             local_recv_buf_len: u16::MAX as usize,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_queue_byte_cap: 1024 * 64,
+            to_send_queue_len_cap: 1024 * 64,
             swnd_size_cap: u16::MAX as usize,
         };
         builder
@@ -102,6 +102,8 @@ pub enum SetStateError {
 pub enum OutputError {
     NothingToOutput,
 }
+
+pub struct SendError<T>(pub T);
 
 impl Uploader {
     #[inline]
@@ -120,8 +122,11 @@ impl Uploader {
         }
     }
 
-    pub fn to_send(&mut self, rdr: buf::BufRdr) -> Result<(), buf::PushError<buf::BufRdr>> {
-        self.to_send_queue.push_back(rdr)
+    pub fn to_send(&mut self, slice: buf::BufSlice) -> Result<(), SendError<buf::BufSlice>> {
+        match self.to_send_queue.push_back(slice) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(SendError(e.0)),
+        }
     }
 
     pub fn output_packet(&mut self, wtr: &mut impl BufWtr) -> Result<(), OutputError> {
@@ -267,7 +272,7 @@ impl Uploader {
                 if free_space == 0 {
                     break;
                 }
-                let buf = self.to_send_queue.slice_front(free_space);
+                let buf = self.to_send_queue.slice_front(free_space).unwrap();
                 frag_body.append(buf);
             }
             assert!(frag_body.len() <= frag_body_limit);
@@ -426,7 +431,7 @@ mod tests {
         layer::{uploader::UploaderBuilder, SetUploadState},
         protocol::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
         utils::{
-            buf::{BufRdr, BufWtr, OwnedBufWtr},
+            buf::{BufSlice, BufWtr, OwnedBufWtr},
             Seq,
         },
     };
@@ -437,8 +442,8 @@ mod tests {
     fn test_empty() {
         let mut upload = UploaderBuilder::default().build();
         let buf = OwnedBufWtr::new(MTU / 2, 0);
-        let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr).map_err(|_| ()).unwrap();
+        let slice = BufSlice::from_wtr(buf);
+        upload.to_send(slice).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
         assert!(!result.is_ok());
@@ -451,8 +456,8 @@ mod tests {
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin = vec![0, 1, 2];
         buf.append(&origin).unwrap();
-        let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr).map_err(|_| ()).unwrap();
+        let slice = BufSlice::from_wtr(buf);
+        upload.to_send(slice).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
         match result.is_ok() {
@@ -476,13 +481,13 @@ mod tests {
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
-        let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr).map_err(|_| ()).unwrap();
+        let slice = BufSlice::from_wtr(buf);
+        upload.to_send(slice).map_err(|_| ()).unwrap();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![3, 4];
         buf.append(&origin2).unwrap();
-        let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr).map_err(|_| ()).unwrap();
+        let slice = BufSlice::from_wtr(buf);
+        upload.to_send(slice).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
         match result.is_ok() {
@@ -514,13 +519,13 @@ mod tests {
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
-        let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr).map_err(|_| ()).unwrap();
+        let slice = BufSlice::from_wtr(buf);
+        upload.to_send(slice).map_err(|_| ()).unwrap();
         let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin2 = vec![3; MTU];
         buf.append(&origin2).unwrap();
-        let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr).map_err(|_| ()).unwrap();
+        let slice = BufSlice::from_wtr(buf);
+        upload.to_send(slice).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
         match result.is_ok() {
@@ -572,13 +577,13 @@ mod tests {
         let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin1 = vec![3; MTU];
         buf.append(&origin1).unwrap();
-        let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr).map_err(|_| ()).unwrap();
+        let slice = BufSlice::from_wtr(buf);
+        upload.to_send(slice).map_err(|_| ()).unwrap();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![0, 1, 2];
         buf.append(&origin2).unwrap();
-        let rdr = BufRdr::from_wtr(buf);
-        upload.to_send(rdr).map_err(|_| ()).unwrap();
+        let slice = BufSlice::from_wtr(buf);
+        upload.to_send(slice).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
         // packet: _hdr hdr mtu-_hdr-hdr
@@ -639,15 +644,15 @@ mod tests {
         {
             let mut buf = OwnedBufWtr::new(MTU / 2, 0);
             buf.append(&origin1).unwrap();
-            let rdr = BufRdr::from_wtr(buf);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_wtr(buf);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let origin2 = vec![3, 4];
         {
             let mut buf = OwnedBufWtr::new(MTU / 2, 0);
             buf.append(&origin2).unwrap();
-            let rdr = BufRdr::from_wtr(buf);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_wtr(buf);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
@@ -685,8 +690,8 @@ mod tests {
 
         let origin1 = vec![0, 1, 2];
         {
-            let rdr = BufRdr::from_bytes(origin1);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(origin1);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(PACKET_HDR_LEN + PUSH_HDR_LEN, 0);
         let _ = upload.output_packet(&mut packet);
@@ -699,8 +704,8 @@ mod tests {
 
         let origin1 = vec![0, 1, 2];
         {
-            let rdr = BufRdr::from_bytes(origin1);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(origin1);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
@@ -725,7 +730,7 @@ mod tests {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_queue_byte_cap: usize::MAX,
+            to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
@@ -734,8 +739,8 @@ mod tests {
 
         let origin1 = vec![0, 1, 2];
         {
-            let rdr = BufRdr::from_bytes(origin1);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(origin1);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
@@ -743,8 +748,8 @@ mod tests {
 
         let origin2 = vec![3];
         {
-            let rdr = BufRdr::from_bytes(origin2);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(origin2);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
@@ -775,7 +780,7 @@ mod tests {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_queue_byte_cap: usize::MAX,
+            to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
@@ -784,8 +789,8 @@ mod tests {
 
         let origin1 = vec![0, 1, 2];
         {
-            let rdr = BufRdr::from_bytes(origin1);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(origin1);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
@@ -793,8 +798,8 @@ mod tests {
 
         let origin2 = vec![3];
         {
-            let rdr = BufRdr::from_bytes(origin2);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(origin2);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
@@ -829,7 +834,7 @@ mod tests {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_queue_byte_cap: usize::MAX,
+            to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
@@ -838,8 +843,8 @@ mod tests {
 
         let origin1 = vec![0, 1, 2];
         {
-            let rdr = BufRdr::from_bytes(origin1);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(origin1);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
@@ -847,8 +852,8 @@ mod tests {
 
         let origin2 = vec![3];
         {
-            let rdr = BufRdr::from_bytes(origin2);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(origin2);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
@@ -856,8 +861,8 @@ mod tests {
 
         let origin3 = vec![4];
         {
-            let rdr = BufRdr::from_bytes(origin3);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(origin3);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
@@ -896,7 +901,7 @@ mod tests {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_queue_byte_cap: usize::MAX,
+            to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
@@ -905,8 +910,8 @@ mod tests {
 
         let origin1 = vec![0, 1, 2];
         {
-            let rdr = BufRdr::from_bytes(origin1);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(origin1);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
@@ -914,8 +919,8 @@ mod tests {
 
         let origin2 = vec![3];
         {
-            let rdr = BufRdr::from_bytes(origin2);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(origin2);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
@@ -923,8 +928,8 @@ mod tests {
 
         let origin3 = vec![4];
         {
-            let rdr = BufRdr::from_bytes(origin3);
-            upload.to_send(rdr).map_err(|_| ()).unwrap();
+            let slice = BufSlice::from_bytes(origin3);
+            upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
