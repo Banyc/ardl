@@ -6,11 +6,8 @@ use self::{
 };
 
 mod sending_frag;
-mod to_send_que;
 pub mod yatcp_download;
 pub mod yatcp_upload;
-
-pub struct SendError<T>(pub T);
 
 pub struct YatcpBuilder {
     pub local_recv_buf_len: usize,

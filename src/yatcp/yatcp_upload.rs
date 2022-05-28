@@ -8,10 +8,10 @@ use crate::{
         frag_hdr::{FragCommand, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN},
         packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
-    utils::{self, BufPasta, BufWtr, FastRetransmissionWnd, Seq, SubBufWtr, Swnd},
+    utils::{self, BufPasta, BufWtr, FastRetransmissionWnd, Seq, SubBufWtr, Swnd, BufSlicer},
 };
 
-use super::{sending_frag::SendingFrag, to_send_que::ToSendQue, SendError, SetUploadState};
+use super::{sending_frag::SendingFrag, SetUploadState};
 
 const ALPHA: f64 = 1.0 / 8.0;
 const MAX_RTO_MS: u64 = 60_000;
@@ -23,7 +23,7 @@ static MIN_RTO: time::Duration = Duration::from_millis(MIN_RTO_MS);
 
 pub struct YatcpUpload {
     // modified by `append_frags_to`
-    to_send_queue: ToSendQue,
+    to_send_queue: utils::BufSlicer,
     swnd: Swnd<SendingFrag>,
     to_ack_queue: VecDeque<Seq>,
 
@@ -54,7 +54,7 @@ impl YatcpUploadBuilder {
     #[must_use]
     pub fn build(self) -> YatcpUpload {
         let this = YatcpUpload {
-            to_send_queue: ToSendQue::new(self.to_send_byte_cap),
+            to_send_queue: BufSlicer::new(self.to_send_byte_cap),
             swnd: Swnd::new(self.swnd_size_cap),
             to_ack_queue: VecDeque::new(),
             local_rwnd_size: self.local_recv_buf_len,
@@ -112,7 +112,7 @@ impl YatcpUpload {
         }
     }
 
-    pub fn to_send(&mut self, rdr: utils::BufRdr) -> Result<(), SendError<utils::BufRdr>> {
+    pub fn to_send(&mut self, rdr: utils::BufRdr) -> Result<(), utils::PushError<utils::BufRdr>> {
         self.to_send_queue.push_back(rdr)
     }
 

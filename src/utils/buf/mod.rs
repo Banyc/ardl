@@ -12,3 +12,5 @@ mod sub_buf_wtr;
 pub use sub_buf_wtr::*;
 mod buf_wtr;
 pub use buf_wtr::*;
+mod buf_slicer;
+pub use buf_slicer::*;
