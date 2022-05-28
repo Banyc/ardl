@@ -2,12 +2,12 @@ use std::collections::VecDeque;
 
 use super::BufSlice;
 
-pub struct BufSlicer {
+pub struct BufSlicerQue {
     queue: VecDeque<BufSlice>,
     len_cap: usize,
 }
 
-impl BufSlicer {
+impl BufSlicerQue {
     fn check_rep(&self) {
         assert!(self.queue.len() <= self.len_cap);
         for slice in &self.queue {
@@ -16,7 +16,7 @@ impl BufSlicer {
     }
 
     pub fn new(len_cap: usize) -> Self {
-        let this = BufSlicer {
+        let this = BufSlicerQue {
             queue: VecDeque::new(),
             len_cap,
         };
@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn test1() {
-        let mut slicer = BufSlicer::new(2);
+        let mut slicer = BufSlicerQue::new(2);
 
         let slice1 = BufSlice::from_bytes(vec![0]);
         let slice2 = BufSlice::from_bytes(vec![1, 2]);

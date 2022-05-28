@@ -189,8 +189,8 @@ fn downloading(
                     .unwrap();
 
                 let mut buf = Vec::new();
-                while let Some(frag) = download.recv() {
-                    buf.extend_from_slice(frag.data());
+                while let Some(slice) = download.recv() {
+                    buf.extend_from_slice(slice.data());
                 }
 
                 if !buf.is_empty() {

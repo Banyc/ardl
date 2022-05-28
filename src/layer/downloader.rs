@@ -76,27 +76,26 @@ impl Downloader {
     #[must_use]
     pub fn recv_max(&mut self, max_len: usize) -> Option<BufSlice> {
         let leftover = self.leftover.take();
-        let frag = if let Some(frag) = leftover {
-            frag
+        let slice = if let Some(slice) = leftover {
+            slice
         } else {
-            if let Some(frag) = self.recv_buf.pop_front() {
-                frag
+            if let Some(slice) = self.recv_buf.pop_front() {
+                slice
             } else {
                 return None;
             }
         };
 
-        let final_frag = if frag.len() > max_len {
-            let slice_front = frag.slice(0..max_len).unwrap();
-            let slice_end = frag.slice(max_len..frag.len()).unwrap();
-            self.leftover = Some(slice_end);
-            Some(slice_front)
+        let final_slice = if slice.len() > max_len {
+            let (head, tail) = slice.split(max_len).unwrap();
+            self.leftover = Some(tail);
+            Some(head)
         } else {
-            Some(frag)
+            Some(slice)
         };
 
         self.check_rep();
-        final_frag
+        final_slice
     }
 
     #[must_use]

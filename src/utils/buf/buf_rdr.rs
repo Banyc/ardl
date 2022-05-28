@@ -81,33 +81,33 @@ mod tests {
     fn take_max() {
         let buf = BufSlice::from_bytes(vec![0, 1, 2, 3, 4, 5]);
         let mut rdr = BufRdr::from_slice(buf);
-        let frag0 = rdr.take_max(1);
-        assert_eq!(frag0.data(), vec![0]);
-        let frag12 = rdr.take_max(2);
-        assert_eq!(frag12.data(), vec![1, 2]);
+        let slice0 = rdr.take_max(1);
+        assert_eq!(slice0.data(), vec![0]);
+        let slice12 = rdr.take_max(2);
+        assert_eq!(slice12.data(), vec![1, 2]);
         assert!(!rdr.is_empty());
-        let frag345 = rdr.take_max(99);
-        assert_eq!(frag345.data(), vec![3, 4, 5]);
+        let slice345 = rdr.take_max(99);
+        assert_eq!(slice345.data(), vec![3, 4, 5]);
         assert!(rdr.is_empty());
-        let frag_none = rdr.take_max(1);
-        assert!(frag_none.is_empty());
+        let slice_empty = rdr.take_max(1);
+        assert!(slice_empty.is_empty());
     }
 
     #[test]
     fn take_precisely() {
         let buf = BufSlice::from_bytes(vec![0, 1, 2, 3, 4, 5]);
         let mut rdr = BufRdr::from_slice(buf);
-        let frag0 = rdr.take_precisely(1).unwrap();
-        assert_eq!(frag0.data(), vec![0]);
-        let frag12 = rdr.take_precisely(2).unwrap();
-        assert_eq!(frag12.data(), vec![1, 2]);
+        let slice0 = rdr.take_precisely(1).unwrap();
+        assert_eq!(slice0.data(), vec![0]);
+        let slice12 = rdr.take_precisely(2).unwrap();
+        assert_eq!(slice12.data(), vec![1, 2]);
         assert!(!rdr.is_empty());
-        let frag_err = rdr.take_precisely(99);
-        assert!(frag_err.is_err());
-        let frag345 = rdr.take_precisely(3).unwrap();
-        assert_eq!(frag345.data(), vec![3, 4, 5]);
+        let slice_err = rdr.take_precisely(99);
+        assert!(slice_err.is_err());
+        let slice345 = rdr.take_precisely(3).unwrap();
+        assert_eq!(slice345.data(), vec![3, 4, 5]);
         assert!(rdr.is_empty());
-        let frag_err = rdr.take_precisely(1);
-        assert!(frag_err.is_err());
+        let slice_err = rdr.take_precisely(1);
+        assert!(slice_err.is_err());
     }
 }

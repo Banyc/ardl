@@ -9,7 +9,7 @@ use crate::{
         packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
     utils::{
-        buf::{self, BufPasta, BufSlicer, BufWtr, SubBufWtr},
+        buf::{self, BufPasta, BufSlicerQue, BufWtr, SubBufWtr},
         FastRetransmissionWnd, Seq, Swnd,
     },
 };
@@ -26,7 +26,7 @@ static MIN_RTO: time::Duration = Duration::from_millis(MIN_RTO_MS);
 
 pub struct Uploader {
     // modified by `append_frags_to`
-    to_send_queue: buf::BufSlicer,
+    to_send_queue: buf::BufSlicerQue,
     swnd: Swnd<SendingFrag>,
     to_ack_queue: VecDeque<Seq>,
 
@@ -57,7 +57,7 @@ impl UploaderBuilder {
     #[must_use]
     pub fn build(self) -> Uploader {
         let this = Uploader {
-            to_send_queue: BufSlicer::new(self.to_send_queue_len_cap),
+            to_send_queue: BufSlicerQue::new(self.to_send_queue_len_cap),
             swnd: Swnd::new(self.swnd_size_cap),
             to_ack_queue: VecDeque::new(),
             local_rwnd_size: self.local_recv_buf_len,

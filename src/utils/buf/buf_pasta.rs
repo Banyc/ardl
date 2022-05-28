@@ -14,8 +14,8 @@ impl BufPasta {
     #[inline]
     fn check_rep(&self) {
         let mut cum_len = 0;
-        for frag in &self.slices {
-            cum_len += frag.data().len();
+        for slice in &self.slices {
+            cum_len += slice.data().len();
         }
         assert_eq!(cum_len, self.len);
     }
@@ -33,9 +33,9 @@ impl BufPasta {
         self.len
     }
 
-    pub fn append(&mut self, frag: BufSlice) {
-        self.len += frag.data().len();
-        self.slices.push(frag);
+    pub fn append(&mut self, slice: BufSlice) {
+        self.len += slice.data().len();
+        self.slices.push(slice);
         self.check_rep();
     }
 
@@ -43,8 +43,8 @@ impl BufPasta {
         if wtr.back_len() < self.len {
             return Err(Error::NotEnoughSpace);
         }
-        for frag in &self.slices {
-            wtr.append(frag.data()).unwrap();
+        for slice in &self.slices {
+            wtr.append(slice.data()).unwrap();
         }
         Ok(())
     }
@@ -53,8 +53,8 @@ impl BufPasta {
         if wtr.front_len() < self.len {
             return Err(Error::NotEnoughSpace);
         }
-        for frag in &self.slices {
-            wtr.prepend(frag.data()).unwrap();
+        for slice in &self.slices {
+            wtr.prepend(slice.data()).unwrap();
         }
         Ok(())
     }
