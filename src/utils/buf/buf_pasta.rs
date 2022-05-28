@@ -62,11 +62,8 @@ impl BufPasta {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::buf::BufSlice;
 
-    use super::{BufWtr, OwnedBufWtr};
-
-    use super::BufPasta;
+    use super::{BufPasta, BufSlice, BufWtr, OwnedBufWtr};
 
     #[test]
     fn append() {
