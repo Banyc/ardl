@@ -124,7 +124,7 @@ fn stat_timer(
 
 fn uploading(
     listener: Arc<UdpSocket>,
-    mut upload: Uploader,
+    mut uploader: Uploader,
     messaging: mpsc::Receiver<UploadingMessaging>,
 ) {
     let mut old_stat = None;
@@ -133,7 +133,7 @@ fn uploading(
         let msg = messaging.recv().unwrap();
         match msg {
             UploadingMessaging::SetUploadState(state) => {
-                upload.set_state(state).unwrap();
+                uploader.set_state(state).unwrap();
             }
             UploadingMessaging::Flush => {
                 if let None = remote_addr_ {
@@ -141,16 +141,16 @@ fn uploading(
                 }
 
                 let mut wtr = OwnedBufWtr::new(MTU, 0);
-                if let Ok(()) = upload.output_packet(&mut wtr) {
+                if let Ok(()) = uploader.output_packet(&mut wtr) {
                     listener.send_to(wtr.data(), remote_addr_.unwrap()).unwrap();
                 }
             }
-            UploadingMessaging::ToSend(slice, responser) => match upload.to_send(slice) {
+            UploadingMessaging::ToSend(slice, responser) => match uploader.to_send(slice) {
                 Ok(()) => responser.send(UploadingToSendResponse::Ok).unwrap(),
                 Err(e) => responser.send(UploadingToSendResponse::Err(e.0)).unwrap(),
             },
             UploadingMessaging::PrintStat => {
-                let stat = upload.stat();
+                let stat = uploader.stat();
                 if let Some(old_stat) = old_stat {
                     if old_stat != stat {
                         let time = SystemTime::now()
@@ -170,7 +170,7 @@ fn uploading(
 }
 
 fn downloading(
-    mut download: Downloader,
+    mut downloader: Downloader,
     messaging: mpsc::Receiver<DownloadingMessaging>,
     uploading_messaging_tx: Arc<mpsc::SyncSender<UploadingMessaging>>,
 ) {
@@ -180,7 +180,7 @@ fn downloading(
         match msg {
             DownloadingMessaging::ConnRecv(wtr) => {
                 let rdr = BufRdr::from_wtr(wtr);
-                let set_upload_states = match download.input_packet(rdr) {
+                let set_upload_states = match downloader.input_packet(rdr) {
                     Ok(x) => x,
                     Err(_) => todo!(),
                 };
@@ -189,7 +189,7 @@ fn downloading(
                     .unwrap();
 
                 let mut buf = Vec::new();
-                while let Some(slice) = download.recv() {
+                while let Some(slice) = downloader.recv() {
                     buf.extend_from_slice(slice.data());
                 }
 
@@ -202,7 +202,7 @@ fn downloading(
                 }
             }
             DownloadingMessaging::PrintStat => {
-                let stat = download.stat();
+                let stat = downloader.stat();
                 if let Some(old_stat) = old_stat {
                     if old_stat != stat {
                         let time = SystemTime::now()
