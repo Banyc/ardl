@@ -45,7 +45,7 @@ pub struct SetUploadState {
 mod tests {
     use std::thread;
 
-    use crate::utils::buf::{BufRdr, BufSlice, BufWtr, OwnedBufWtr};
+    use crate::utils::buf::{BufSlice, BufWtr, OwnedBufWtr};
 
     use super::Builder;
 
@@ -89,7 +89,7 @@ mod tests {
                 ]
             );
 
-            let inflight = BufRdr::from_wtr(inflight);
+            let inflight = BufSlice::from_wtr(inflight);
             let upload2_changes = download2.input_packet(inflight).unwrap();
             upload2.set_state(upload2_changes).unwrap();
 
@@ -104,7 +104,7 @@ mod tests {
             //                               rwnd] [     nack] [      seq] [cmd
             assert_eq!(inflight.data(), vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
-            let inflight = BufRdr::from_wtr(inflight);
+            let inflight = BufSlice::from_wtr(inflight);
             let upload1_changes = download1.input_packet(inflight).unwrap();
             upload1.set_state(upload1_changes).unwrap();
         }
@@ -150,7 +150,7 @@ mod tests {
                 ]
             );
 
-            let inflight = BufRdr::from_wtr(inflight);
+            let inflight = BufSlice::from_wtr(inflight);
             let upload2_changes = download2.input_packet(inflight).unwrap();
             upload2.set_state(upload2_changes).unwrap();
 

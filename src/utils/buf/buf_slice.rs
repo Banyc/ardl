@@ -102,6 +102,18 @@ impl BufSlice {
         .build()?;
         Ok((head, tail))
     }
+
+    #[must_use]
+    pub fn pop_front(&mut self, len: usize) -> Result<BufSlice, Error> {
+        let range_mid = self.range.start + len;
+        let front = BufSliceBuilder {
+            buf: Arc::clone(&self.buf),
+            range: self.range.start..range_mid,
+        }
+        .build()?;
+        self.range.start = range_mid;
+        Ok(front)
+    }
 }
 
 #[derive(Debug)]
@@ -114,9 +126,7 @@ mod tests {
 
     use std::sync::Arc;
 
-    use super::{BufWtr, OwnedBufWtr};
-
-    use super::BufSliceBuilder;
+    use super::{BufSlice, BufSliceBuilder, BufWtr, OwnedBufWtr};
 
     #[test]
     fn data() {
@@ -170,5 +180,22 @@ mod tests {
         let (head, tail) = slice.split(1).unwrap();
         assert_eq!(head.data(), vec![0]);
         assert_eq!(tail.data(), vec![1, 2]);
+    }
+
+    #[test]
+    fn pop_front() {
+        let mut buf = BufSlice::from_bytes(vec![0, 1, 2, 3, 4, 5]);
+        let slice0 = buf.pop_front(1).unwrap();
+        assert_eq!(slice0.data(), vec![0]);
+        let slice12 = buf.pop_front(2).unwrap();
+        assert_eq!(slice12.data(), vec![1, 2]);
+        assert!(!buf.is_empty());
+        let slice_err = buf.pop_front(99);
+        assert!(slice_err.is_err());
+        let slice345 = buf.pop_front(3).unwrap();
+        assert_eq!(slice345.data(), vec![3, 4, 5]);
+        assert!(buf.is_empty());
+        let slice_err = buf.pop_front(1);
+        assert!(slice_err.is_err());
     }
 }

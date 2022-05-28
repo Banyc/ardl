@@ -10,5 +10,3 @@ mod buf_wtr;
 pub use buf_wtr::*;
 mod buf_slicer_que;
 pub use buf_slicer_que::*;
-mod buf_rdr;
-pub use buf_rdr::*;

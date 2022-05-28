@@ -8,7 +8,7 @@ use std::{
 use ardl::{
     layer::{Builder, Downloader, SetUploadState, Uploader},
     protocol::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
-    utils::buf::{BufRdr, BufSlice, BufWtr, OwnedBufWtr},
+    utils::buf::{BufSlice, BufWtr, OwnedBufWtr},
 };
 
 // const MTU: usize = 512;
@@ -179,7 +179,7 @@ fn downloading(
         let msg = messaging.recv().unwrap();
         match msg {
             DownloadingMessaging::ConnRecv(wtr) => {
-                let rdr = BufRdr::from_wtr(wtr);
+                let rdr = BufSlice::from_wtr(wtr);
                 let set_upload_states = match downloader.input_packet(rdr) {
                     Ok(x) => x,
                     Err(_) => todo!(),
