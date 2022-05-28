@@ -1,8 +1,6 @@
 use std::ops::Range;
 
-use crate::utils::Seq;
-
-use super::threshold::DuplicateThreshold;
+use crate::utils::{dup::DuplicateThreshold, Seq};
 
 pub struct FastRetransmissionWnd {
     start: Seq,

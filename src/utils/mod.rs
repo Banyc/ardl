@@ -1,8 +1,9 @@
 pub mod buf;
+pub mod dup;
 mod seq;
 pub use seq::*;
-mod fast_retransmit;
-pub use fast_retransmit::*;
+mod fast_retransmit_wnd;
+pub use fast_retransmit_wnd::*;
 mod recv_buf;
 pub use recv_buf::*;
 mod swnd;
