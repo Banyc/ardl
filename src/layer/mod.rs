@@ -75,8 +75,7 @@ mod tests {
             upload1.to_send(rdr).map_err(|_| ()).unwrap();
 
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            let is_written = upload1.append_packet_to_and_if_written(&mut inflight);
-            assert!(is_written);
+            upload1.output_packet(&mut inflight).unwrap();
 
             assert_eq!(
                 inflight.data(),
@@ -100,8 +99,7 @@ mod tests {
         // ack: 1 <- 2
         {
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            let is_written = upload2.append_packet_to_and_if_written(&mut inflight);
-            assert!(is_written);
+            upload2.output_packet(&mut inflight).unwrap();
 
             //                               rwnd] [     nack] [      seq] [cmd
             assert_eq!(inflight.data(), vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -138,8 +136,7 @@ mod tests {
             upload1.to_send(rdr).map_err(|_| ()).unwrap();
 
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            let is_written = upload1.append_packet_to_and_if_written(&mut inflight);
-            assert!(is_written);
+            upload1.output_packet(&mut inflight).unwrap();
 
             assert_eq!(
                 inflight.data(),
@@ -163,8 +160,7 @@ mod tests {
         // ack: 1 <- 2
         {
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            let is_written = upload2.append_packet_to_and_if_written(&mut inflight);
-            assert!(is_written);
+            upload2.output_packet(&mut inflight).unwrap();
 
             //                               rwnd] [     nack] [      seq] [cmd
             assert_eq!(inflight.data(), vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -175,8 +171,7 @@ mod tests {
         // retransmit: 1 -> 2
         {
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            let is_written = upload1.append_packet_to_and_if_written(&mut inflight);
-            assert!(is_written);
+            upload1.output_packet(&mut inflight).unwrap();
 
             assert_eq!(
                 inflight.data(),

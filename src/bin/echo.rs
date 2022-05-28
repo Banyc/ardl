@@ -141,12 +141,9 @@ fn uploading(
                 }
 
                 let mut wtr = OwnedBufWtr::new(MTU, 0);
-                let is_written = upload.append_packet_to_and_if_written(&mut wtr);
-                if !is_written {
-                    continue;
+                if let Ok(()) = upload.output_packet(&mut wtr) {
+                    listener.send_to(wtr.data(), remote_addr_.unwrap()).unwrap();
                 }
-
-                listener.send_to(wtr.data(), remote_addr_.unwrap()).unwrap();
             }
             UploadingMessaging::ToSend(rdr, responser) => match upload.to_send(rdr) {
                 Ok(()) => responser.send(UploadingToSendResponse::Ok).unwrap(),

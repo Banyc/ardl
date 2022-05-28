@@ -98,6 +98,11 @@ pub enum SetStateError {
     InvalidState,
 }
 
+#[derive(Debug)]
+pub enum OutputError {
+    NothingToOutput,
+}
+
 impl Uploader {
     #[inline]
     fn check_rep(&self) {}
@@ -119,7 +124,17 @@ impl Uploader {
         self.to_send_queue.push_back(rdr)
     }
 
-    pub fn append_packet_to_and_if_written(&mut self, wtr: &mut impl BufWtr) -> bool {
+    pub fn output_packet(&mut self, wtr: &mut impl BufWtr) -> Result<(), OutputError> {
+        let result = self.append_packet_to(wtr);
+        // if result.is_ok() {
+        //     // callback when `to_send` is not full
+        //     // TODO
+        // }
+        self.check_rep();
+        result
+    }
+
+    fn append_packet_to(&mut self, wtr: &mut impl BufWtr) -> Result<(), OutputError> {
         assert!(PACKET_HDR_LEN + ACK_HDR_LEN <= wtr.back_len());
         assert!(PACKET_HDR_LEN + PUSH_HDR_LEN + 1 <= wtr.back_len());
 
@@ -142,8 +157,13 @@ impl Uploader {
 
             let sub_wtr_len = sub_wtr.data_len();
             wtr.grow_back(sub_wtr_len).unwrap();
+
+            self.check_rep();
+            Ok(())
+        } else {
+            self.check_rep();
+            Err(OutputError::NothingToOutput)
         }
-        is_written
     }
 
     #[inline]
@@ -420,8 +440,8 @@ mod tests {
         let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(!is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(!result.is_ok());
     }
 
     #[test]
@@ -434,8 +454,8 @@ mod tests {
         let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        match is_written {
+        let result = upload.output_packet(&mut packet);
+        match result.is_ok() {
             true => {
                 assert_eq!(
                     packet.data_len(),
@@ -446,8 +466,8 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(!is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(!result.is_ok());
     }
 
     #[test]
@@ -464,8 +484,8 @@ mod tests {
         let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        match is_written {
+        let result = upload.output_packet(&mut packet);
+        match result.is_ok() {
             true => {
                 assert_eq!(
                     packet.data_len(),
@@ -485,7 +505,7 @@ mod tests {
         }
         assert_eq!(upload.swnd.end().to_u32(), 1);
         packet.reset_data(0);
-        assert!(!upload.append_packet_to_and_if_written(&mut packet));
+        assert!(upload.output_packet(&mut packet).is_err());
     }
 
     #[test]
@@ -502,8 +522,8 @@ mod tests {
         let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        match is_written {
+        let result = upload.output_packet(&mut packet);
+        match result.is_ok() {
             true => {
                 assert_eq!(packet.data_len(), MTU);
                 assert_eq!(
@@ -520,15 +540,15 @@ mod tests {
         }
         assert_eq!(upload.swnd.end().to_u32(), 1);
         packet.reset_data(0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(!is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(!result.is_ok());
         assert_eq!(upload.swnd.end().to_u32(), 1);
 
         upload.set_remote_rwnd_size(10);
 
         packet.reset_data(0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        match is_written {
+        let result = upload.output_packet(&mut packet);
+        match result.is_ok() {
             true => {
                 assert_eq!(
                     packet.data_len(),
@@ -543,7 +563,7 @@ mod tests {
         }
         assert_eq!(upload.swnd.end().to_u32(), 2);
         packet.reset_data(0);
-        assert!(!upload.append_packet_to_and_if_written(&mut packet));
+        assert!(upload.output_packet(&mut packet).is_err());
     }
 
     #[test]
@@ -560,10 +580,10 @@ mod tests {
         let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr).map_err(|_| ()).unwrap();
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        let result = upload.output_packet(&mut packet);
         // packet: _hdr hdr mtu-_hdr-hdr
         // origin:          1[0..mtu-_hdr-hdr]
-        match is_written {
+        match result.is_ok() {
             true => {
                 assert_eq!(packet.data_len(), MTU);
                 assert_eq!(
@@ -574,16 +594,16 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(!is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(!result.is_ok());
 
         upload.set_remote_rwnd_size(10);
 
         packet.reset_data(0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        let result = upload.output_packet(&mut packet);
         // packet: _hdr hdr _hdr+hdr             3
         // origin:          1[mtu-_hdr-hdr..mtu] 2[0..3]
-        match is_written {
+        match result.is_ok() {
             true => {
                 assert_eq!(
                     packet.data_len(),
@@ -607,7 +627,7 @@ mod tests {
             false => panic!(),
         }
         packet.reset_data(0);
-        assert!(!upload.append_packet_to_and_if_written(&mut packet));
+        assert!(upload.output_packet(&mut packet).is_err());
     }
 
     #[test]
@@ -630,8 +650,8 @@ mod tests {
             upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        match is_written {
+        let result = upload.output_packet(&mut packet);
+        match result.is_ok() {
             true => {
                 assert_eq!(
                     packet.data_len(),
@@ -669,7 +689,7 @@ mod tests {
             upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(PACKET_HDR_LEN + PUSH_HDR_LEN, 0);
-        upload.append_packet_to_and_if_written(&mut packet);
+        let _ = upload.output_packet(&mut packet);
     }
 
     #[test]
@@ -683,19 +703,19 @@ mod tests {
             upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(result.is_ok());
 
         thread::sleep(upload.rto());
 
         packet.reset_data(0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        let result = upload.output_packet(&mut packet);
         // last_seen of the fragment is refreshed
-        assert!(is_written);
+        assert!(result.is_ok());
 
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        let result = upload.output_packet(&mut packet);
         // the fragment doesn't timeout
-        assert!(!is_written);
+        assert!(!result.is_ok());
     }
 
     #[test]
@@ -718,8 +738,8 @@ mod tests {
             upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(result.is_ok());
 
         let origin2 = vec![3];
         {
@@ -727,8 +747,8 @@ mod tests {
             upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(result.is_ok());
 
         // nack is 0 by default. When receiving another same nack, the fast retransmission gets activated since now the dup count becomes 1
 
@@ -743,9 +763,9 @@ mod tests {
         upload.set_state(state).unwrap();
 
         packet.reset_data(0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        let result = upload.output_packet(&mut packet);
 
-        assert!(is_written);
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -768,8 +788,8 @@ mod tests {
             upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(result.is_ok());
 
         let origin2 = vec![3];
         {
@@ -777,8 +797,8 @@ mod tests {
             upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(result.is_ok());
 
         let state = SetUploadState {
             remote_rwnd_size: 99,
@@ -797,9 +817,9 @@ mod tests {
         // ack nack
 
         packet.reset_data(0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        let result = upload.output_packet(&mut packet);
 
-        assert!(!is_written);
+        assert!(!result.is_ok());
     }
 
     #[test]
@@ -822,8 +842,8 @@ mod tests {
             upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(result.is_ok());
 
         let origin2 = vec![3];
         {
@@ -831,8 +851,8 @@ mod tests {
             upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(result.is_ok());
 
         let origin3 = vec![4];
         {
@@ -840,8 +860,8 @@ mod tests {
             upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(result.is_ok());
 
         let state = SetUploadState {
             remote_rwnd_size: 99,
@@ -864,9 +884,9 @@ mod tests {
         // dup count for nack(1): 0
 
         packet.reset_data(0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        let result = upload.output_packet(&mut packet);
 
-        assert!(is_written);
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -889,8 +909,8 @@ mod tests {
             upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(result.is_ok());
 
         let origin2 = vec![3];
         {
@@ -898,8 +918,8 @@ mod tests {
             upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(result.is_ok());
 
         let origin3 = vec![4];
         {
@@ -907,8 +927,8 @@ mod tests {
             upload.to_send(rdr).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(MTU, 0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
-        assert!(is_written);
+        let result = upload.output_packet(&mut packet);
+        assert!(result.is_ok());
 
         let state = SetUploadState {
             remote_rwnd_size: 99,
@@ -931,9 +951,9 @@ mod tests {
         // dup count for nack(1): 0
 
         packet.reset_data(0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        let result = upload.output_packet(&mut packet);
 
-        assert!(!is_written);
+        assert!(!result.is_ok());
 
         let state = SetUploadState {
             remote_rwnd_size: 99,
@@ -948,8 +968,8 @@ mod tests {
         // dup count for nack(1): 1
 
         packet.reset_data(0);
-        let is_written = upload.append_packet_to_and_if_written(&mut packet);
+        let result = upload.output_packet(&mut packet);
 
-        assert!(is_written);
+        assert!(result.is_ok());
     }
 }
