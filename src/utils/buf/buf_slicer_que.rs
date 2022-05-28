@@ -46,10 +46,11 @@ impl BufSlicerQue {
             self.check_rep();
             Ok(slice)
         } else {
-            let (head, tail) = slice.split(max_len).unwrap();
-            self.queue.push_front(tail);
+            let mut slice = slice;
+            let front = slice.pop_front(max_len).unwrap();
+            self.queue.push_front(slice);
             self.check_rep();
-            Ok(head)
+            Ok(front)
         }
     }
 

@@ -104,6 +104,7 @@ impl BufSlice {
     }
 
     #[must_use]
+    #[inline]
     pub fn pop_front(&mut self, len: usize) -> Result<BufSlice, Error> {
         let range_mid = self.range.start + len;
         let front = BufSliceBuilder {
