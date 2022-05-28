@@ -7,22 +7,22 @@ use super::SendError;
 pub struct ToSendQue {
     queue: VecDeque<utils::BufRdr>,
     byte_len: usize,
-    byte_capacity: usize,
+    byte_cap: usize,
 }
 
 impl ToSendQue {
     fn check_rep(&self) {
-        assert!(self.byte_len <= self.byte_capacity);
+        assert!(self.byte_len <= self.byte_cap);
         if !self.queue.is_empty() {
             assert!(!self.queue.front().unwrap().is_empty());
         }
     }
 
-    pub fn new(byte_capacity: usize) -> Self {
+    pub fn new(byte_cap: usize) -> Self {
         let this = ToSendQue {
             queue: VecDeque::new(),
             byte_len: 0,
-            byte_capacity,
+            byte_cap,
         };
         this.check_rep();
         this
@@ -30,7 +30,7 @@ impl ToSendQue {
 
     pub fn push_back(&mut self, rdr: utils::BufRdr) -> Result<(), SendError<utils::BufRdr>> {
         let rdr_len = rdr.len();
-        if !(self.byte_len + rdr_len <= self.byte_capacity) {
+        if !(self.byte_len + rdr_len <= self.byte_cap) {
             return Err(SendError(rdr));
         }
         if rdr.is_empty() {

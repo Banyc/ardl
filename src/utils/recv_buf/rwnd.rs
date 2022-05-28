@@ -32,7 +32,7 @@ impl<T> Rwnd<T> {
     }
 
     #[inline]
-    pub fn increment_capacity(&mut self) {
+    pub fn increment_size(&mut self) {
         self.size += 1;
         self.check_rep();
     }

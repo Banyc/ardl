@@ -94,12 +94,12 @@ impl YatcpDownload {
     pub fn input(&mut self, mut rdr: utils::BufRdr) -> Result<SetUploadState, Error> {
         let partial_state_changes = self.handle_packet(&mut rdr)?;
         let state_changes = SetUploadState {
-            remote_rwnd: partial_state_changes.remote_rwnd,
+            remote_rwnd_size: partial_state_changes.remote_rwnd,
             remote_nack: partial_state_changes.remote_nack,
             local_next_seq_to_receive: self.recv_buf.next_seq_to_receive(),
             remote_seqs_to_ack: partial_state_changes.frags.remote_seqs_to_ack,
             acked_local_seqs: partial_state_changes.frags.acked_local_seqs,
-            local_rwnd_capacity: self.recv_buf.rwnd_capacity(),
+            local_rwnd_size: self.recv_buf.rwnd_size(),
         };
         Ok(state_changes)
     }
@@ -291,9 +291,9 @@ mod tests {
         let rdr = BufRdr::from_bytes(buf);
         let changes = download.input(rdr).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 1);
-        assert_eq!(changes.local_rwnd_capacity, 2);
+        assert_eq!(changes.local_rwnd_size, 2);
         assert_eq!(changes.remote_nack.to_u32(), 0);
-        assert_eq!(changes.remote_rwnd, 2);
+        assert_eq!(changes.remote_rwnd_size, 2);
         let tmp: Vec<Seq> = vec![0].iter().map(|&x| Seq::from_u32(x)).collect();
         assert_eq!(changes.remote_seqs_to_ack, tmp);
         assert_eq!(changes.acked_local_seqs, vec![]);
@@ -327,9 +327,9 @@ mod tests {
         let rdr = BufRdr::from_bytes(buf);
         let changes = download.input(rdr).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
-        assert_eq!(changes.local_rwnd_capacity, 3);
+        assert_eq!(changes.local_rwnd_size, 3);
         assert_eq!(changes.remote_nack.to_u32(), 0);
-        assert_eq!(changes.remote_rwnd, 2);
+        assert_eq!(changes.remote_rwnd_size, 2);
         let tmp: Vec<Seq> = vec![1].iter().map(|&x| Seq::from_u32(x)).collect();
         assert_eq!(changes.remote_seqs_to_ack, tmp);
         assert_eq!(changes.acked_local_seqs, vec![]);
@@ -361,9 +361,9 @@ mod tests {
         let rdr = BufRdr::from_bytes(buf);
         let changes = download.input(rdr).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
-        assert_eq!(changes.local_rwnd_capacity, 3);
+        assert_eq!(changes.local_rwnd_size, 3);
         assert_eq!(changes.remote_nack.to_u32(), 0);
-        assert_eq!(changes.remote_rwnd, 2);
+        assert_eq!(changes.remote_rwnd_size, 2);
         assert_eq!(changes.remote_seqs_to_ack, vec![]);
         assert_eq!(changes.acked_local_seqs, vec![]);
         assert!(download.recv().is_none());
@@ -408,9 +408,9 @@ mod tests {
         let rdr = BufRdr::from_bytes(buf);
         let changes = download.input(rdr).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
-        assert_eq!(changes.local_rwnd_capacity, 3);
+        assert_eq!(changes.local_rwnd_size, 3);
         assert_eq!(changes.remote_nack.to_u32(), 0);
-        assert_eq!(changes.remote_rwnd, 2);
+        assert_eq!(changes.remote_rwnd_size, 2);
         assert_eq!(changes.remote_seqs_to_ack, vec![]);
         let tmp: Vec<Seq> = vec![1, 3].iter().map(|&x| Seq::from_u32(x)).collect();
         assert_eq!(changes.acked_local_seqs, tmp);
@@ -458,9 +458,9 @@ mod tests {
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
-            assert_eq!(changes.local_rwnd_capacity, 2);
+            assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
-            assert_eq!(changes.remote_rwnd, 2);
+            assert_eq!(changes.remote_rwnd_size, 2);
             let tmp: Vec<Seq> = vec![1].iter().map(|&x| Seq::from_u32(x)).collect();
             assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
@@ -503,9 +503,9 @@ mod tests {
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 2);
-            assert_eq!(changes.local_rwnd_capacity, 0);
+            assert_eq!(changes.local_rwnd_size, 0);
             assert_eq!(changes.remote_nack.to_u32(), 0);
-            assert_eq!(changes.remote_rwnd, 2);
+            assert_eq!(changes.remote_rwnd_size, 2);
             let tmp: Vec<Seq> = vec![0].iter().map(|&x| Seq::from_u32(x)).collect();
             assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
@@ -538,9 +538,9 @@ mod tests {
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 3);
-            assert_eq!(changes.local_rwnd_capacity, 1);
+            assert_eq!(changes.local_rwnd_size, 1);
             assert_eq!(changes.remote_nack.to_u32(), 0);
-            assert_eq!(changes.remote_rwnd, 2);
+            assert_eq!(changes.remote_rwnd_size, 2);
             let tmp: Vec<Seq> = vec![2].iter().map(|&x| Seq::from_u32(x)).collect();
             assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
@@ -574,9 +574,9 @@ mod tests {
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 3);
-            assert_eq!(changes.local_rwnd_capacity, 2);
+            assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
-            assert_eq!(changes.remote_rwnd, 2);
+            assert_eq!(changes.remote_rwnd_size, 2);
             assert_eq!(changes.remote_seqs_to_ack, vec![Seq::from_u32(0)]);
             assert_eq!(changes.acked_local_seqs, vec![]);
             assert!(download.recv().is_none());
@@ -615,9 +615,9 @@ mod tests {
             let rdr = BufRdr::from_bytes(buf);
             let changes = download.input(rdr).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 1);
-            assert_eq!(changes.local_rwnd_capacity, 2);
+            assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
-            assert_eq!(changes.remote_rwnd, 2);
+            assert_eq!(changes.remote_rwnd_size, 2);
             let tmp: Vec<Seq> = vec![0].iter().map(|&x| Seq::from_u32(x)).collect();
             assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);

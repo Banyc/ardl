@@ -28,7 +28,7 @@ pub struct YatcpUpload {
     to_ack_queue: VecDeque<Seq>,
 
     // modified by setters
-    local_rwnd_capacity: usize,
+    local_rwnd_size: usize,
     local_next_seq_to_receive: Seq,
     fast_retransmission_wnd: FastRetransmissionWnd,
 
@@ -46,17 +46,17 @@ pub struct YatcpUploadBuilder {
     pub local_recv_buf_len: usize,
     pub nack_duplicate_threshold_to_activate_fast_retransmit: usize,
     pub ratio_rto_to_one_rtt: f64,
-    pub to_send_byte_capacity: usize,
+    pub to_send_byte_cap: usize,
     pub swnd_size_cap: usize,
 }
 
 impl YatcpUploadBuilder {
     pub fn build(self) -> YatcpUpload {
         let this = YatcpUpload {
-            to_send_queue: ToSendQue::new(self.to_send_byte_capacity),
+            to_send_queue: ToSendQue::new(self.to_send_byte_cap),
             swnd: Swnd::new(self.swnd_size_cap),
             to_ack_queue: VecDeque::new(),
-            local_rwnd_capacity: self.local_recv_buf_len,
+            local_rwnd_size: self.local_recv_buf_len,
             local_next_seq_to_receive: Seq::from_u32(0),
             stat: LocalStat {
                 srtt: None,
@@ -81,7 +81,7 @@ impl YatcpUploadBuilder {
             local_recv_buf_len: u16::MAX as usize,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_capacity: 1024 * 64,
+            to_send_byte_cap: 1024 * 64,
             swnd_size_cap: u16::MAX as usize,
         };
         builder
@@ -125,7 +125,7 @@ impl YatcpUpload {
         if is_written {
             // packet header
             let hdr = PacketHeaderBuilder {
-                rwnd: self.local_rwnd_capacity as u16,
+                rwnd: self.local_rwnd_size as u16,
                 nack: self.local_next_seq_to_receive,
             }
             .build()
@@ -288,7 +288,7 @@ impl YatcpUpload {
     }
 
     #[inline]
-    fn set_remote_rwnd(&mut self, wnd: u16) {
+    fn set_remote_rwnd_size(&mut self, wnd: u16) {
         self.swnd.set_remote_rwnd_size(wnd as usize);
         self.check_rep();
     }
@@ -332,8 +332,8 @@ impl YatcpUpload {
     }
 
     #[inline]
-    fn set_rwnd_capacity(&mut self, local_rwnd_capacity: usize) {
-        self.local_rwnd_capacity = local_rwnd_capacity;
+    fn set_local_rwnd_size(&mut self, local_rwnd_size: usize) {
+        self.local_rwnd_size = local_rwnd_size;
     }
 
     #[inline]
@@ -344,9 +344,9 @@ impl YatcpUpload {
             }
         }
 
-        self.set_remote_rwnd(delta.remote_rwnd);
+        self.set_remote_rwnd_size(delta.remote_rwnd_size);
         self.set_local_next_seq_to_receive(delta.local_next_seq_to_receive);
-        self.set_rwnd_capacity(delta.local_rwnd_capacity);
+        self.set_local_rwnd_size(delta.local_rwnd_size);
         let mut max_acked_local_seq = None;
         for acked_local_seq in delta.acked_local_seqs {
             self.set_acked_local_seq(acked_local_seq);
@@ -514,7 +514,7 @@ mod tests {
         assert!(!is_written);
         assert_eq!(upload.swnd.end().to_u32(), 1);
 
-        upload.set_remote_rwnd(10);
+        upload.set_remote_rwnd_size(10);
 
         packet.reset_data(0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -567,7 +567,7 @@ mod tests {
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
         assert!(!is_written);
 
-        upload.set_remote_rwnd(10);
+        upload.set_remote_rwnd_size(10);
 
         packet.reset_data(0);
         let is_written = upload.append_packet_to_and_if_written(&mut packet);
@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn test_ack1() {
         let mut upload = YatcpUploadBuilder::default().build();
-        upload.set_remote_rwnd(2);
+        upload.set_remote_rwnd_size(2);
 
         let origin1 = vec![0, 1, 2];
         {
@@ -651,7 +651,7 @@ mod tests {
     #[should_panic]
     fn test_not_enough_space_for_push() {
         let mut upload = YatcpUploadBuilder::default().build();
-        upload.set_remote_rwnd(2);
+        upload.set_remote_rwnd_size(2);
 
         let origin1 = vec![0, 1, 2];
         {
@@ -665,7 +665,7 @@ mod tests {
     #[test]
     fn test_rto_once() {
         let mut upload = YatcpUploadBuilder::default().build();
-        upload.set_remote_rwnd(2);
+        upload.set_remote_rwnd_size(2);
 
         let origin1 = vec![0, 1, 2];
         {
@@ -695,12 +695,12 @@ mod tests {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_capacity: usize::MAX,
+            to_send_byte_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
         upload.disable_rto = true;
-        upload.set_remote_rwnd(2);
+        upload.set_remote_rwnd_size(2);
 
         let origin1 = vec![0, 1, 2];
         {
@@ -723,12 +723,12 @@ mod tests {
         // nack is 0 by default. When receiving another same nack, the fast retransmission gets activated since now the dup count becomes 1
 
         let state = SetUploadState {
-            remote_rwnd: 99,
+            remote_rwnd_size: 99,
             remote_nack: Seq::from_u32(0),
             local_next_seq_to_receive: Seq::from_u32(0),
             remote_seqs_to_ack: vec![],
             acked_local_seqs: vec![Seq::from_u32(1)],
-            local_rwnd_capacity: 1,
+            local_rwnd_size: 1,
         };
         upload.set_state(state).unwrap();
 
@@ -745,12 +745,12 @@ mod tests {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_capacity: usize::MAX,
+            to_send_byte_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
         upload.disable_rto = true;
-        upload.set_remote_rwnd(2);
+        upload.set_remote_rwnd_size(2);
 
         let origin1 = vec![0, 1, 2];
         {
@@ -771,12 +771,12 @@ mod tests {
         assert!(is_written);
 
         let state = SetUploadState {
-            remote_rwnd: 99,
+            remote_rwnd_size: 99,
             remote_nack: Seq::from_u32(1),
             local_next_seq_to_receive: Seq::from_u32(0),
             remote_seqs_to_ack: vec![],
             acked_local_seqs: vec![Seq::from_u32(0)],
-            local_rwnd_capacity: 1,
+            local_rwnd_size: 1,
         };
         upload.set_state(state).unwrap();
 
@@ -799,12 +799,12 @@ mod tests {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_capacity: usize::MAX,
+            to_send_byte_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
         upload.disable_rto = true;
-        upload.set_remote_rwnd(99);
+        upload.set_remote_rwnd_size(99);
 
         let origin1 = vec![0, 1, 2];
         {
@@ -834,12 +834,12 @@ mod tests {
         assert!(is_written);
 
         let state = SetUploadState {
-            remote_rwnd: 99,
+            remote_rwnd_size: 99,
             remote_nack: Seq::from_u32(1),
             local_next_seq_to_receive: Seq::from_u32(0),
             remote_seqs_to_ack: vec![],
             acked_local_seqs: vec![Seq::from_u32(2)],
-            local_rwnd_capacity: 1,
+            local_rwnd_size: 1,
         };
         upload.set_state(state).unwrap();
 
@@ -866,12 +866,12 @@ mod tests {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_capacity: usize::MAX,
+            to_send_byte_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
         upload.disable_rto = true;
-        upload.set_remote_rwnd(99);
+        upload.set_remote_rwnd_size(99);
 
         let origin1 = vec![0, 1, 2];
         {
@@ -901,12 +901,12 @@ mod tests {
         assert!(is_written);
 
         let state = SetUploadState {
-            remote_rwnd: 99,
+            remote_rwnd_size: 99,
             remote_nack: Seq::from_u32(1),
             local_next_seq_to_receive: Seq::from_u32(0),
             remote_seqs_to_ack: vec![],
             acked_local_seqs: vec![Seq::from_u32(2)],
-            local_rwnd_capacity: 1,
+            local_rwnd_size: 1,
         };
         upload.set_state(state).unwrap();
 
@@ -926,12 +926,12 @@ mod tests {
         assert!(!is_written);
 
         let state = SetUploadState {
-            remote_rwnd: 99,
+            remote_rwnd_size: 99,
             remote_nack: Seq::from_u32(1),
             local_next_seq_to_receive: Seq::from_u32(0),
             remote_seqs_to_ack: vec![],
             acked_local_seqs: vec![Seq::from_u32(2)],
-            local_rwnd_capacity: 1,
+            local_rwnd_size: 1,
         };
         upload.set_state(state).unwrap();
 
