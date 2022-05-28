@@ -98,7 +98,7 @@ mod tests {
             );
 
             let inflight = BufRdr::from_wtr(inflight);
-            let upload2_changes = download2.input(inflight).unwrap();
+            let upload2_changes = download2.input_packet(inflight).unwrap();
             upload2.set_state(upload2_changes).unwrap();
 
             let recv2 = download2.recv().unwrap();
@@ -114,7 +114,7 @@ mod tests {
             assert_eq!(inflight.data(), vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
             let inflight = BufRdr::from_wtr(inflight);
-            let upload1_changes = download1.input(inflight).unwrap();
+            let upload1_changes = download1.input_packet(inflight).unwrap();
             upload1.set_state(upload1_changes).unwrap();
         }
     }
@@ -161,7 +161,7 @@ mod tests {
             );
 
             let inflight = BufRdr::from_wtr(inflight);
-            let upload2_changes = download2.input(inflight).unwrap();
+            let upload2_changes = download2.input_packet(inflight).unwrap();
             upload2.set_state(upload2_changes).unwrap();
 
             let recv2 = download2.recv().unwrap();

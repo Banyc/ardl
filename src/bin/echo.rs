@@ -185,7 +185,7 @@ fn yatcp_downloading(
         match msg {
             DownloadingMessaging::ConnRecv(wtr) => {
                 let rdr = BufRdr::from_wtr(wtr);
-                let set_upload_states = match download.input(rdr) {
+                let set_upload_states = match download.input_packet(rdr) {
                     Ok(x) => x,
                     Err(_) => todo!(),
                 };

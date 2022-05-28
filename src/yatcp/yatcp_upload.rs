@@ -51,6 +51,7 @@ pub struct YatcpUploadBuilder {
 }
 
 impl YatcpUploadBuilder {
+    #[must_use]
     pub fn build(self) -> YatcpUpload {
         let this = YatcpUpload {
             to_send_queue: ToSendQue::new(self.to_send_byte_cap),
@@ -76,6 +77,7 @@ impl YatcpUploadBuilder {
         this
     }
 
+    #[must_use]
     pub fn default() -> YatcpUploadBuilder {
         let builder = Self {
             local_recv_buf_len: u16::MAX as usize,
@@ -97,6 +99,7 @@ impl YatcpUpload {
     #[inline]
     fn check_rep(&self) {}
 
+    #[must_use]
     pub fn stat(&self) -> Stat {
         Stat {
             srtt: self.stat.srtt,
@@ -171,7 +174,7 @@ impl YatcpUpload {
         }
 
         // retransmission
-        // write push from sending
+        // write pushes from sending
         let rto = self.rto();
         for (&seq, frag) in self.swnd.iter_mut() {
             if !(PUSH_HDR_LEN + 1 <= wtr.back_len()) {
@@ -263,7 +266,7 @@ impl YatcpUpload {
             wtr.append(&bytes).unwrap();
             frag.body().append_to(wtr).unwrap();
 
-            // register the frag to sending_queue
+            // register the frag to swnd
             self.swnd.push_back(frag);
 
             self.stat.pushes += 1;
@@ -274,6 +277,7 @@ impl YatcpUpload {
         return;
     }
 
+    #[must_use]
     #[inline]
     pub fn rto(&self) -> time::Duration {
         match self.stat.srtt {

@@ -47,6 +47,7 @@ impl YatcpDownload {
     #[inline]
     fn check_rep(&self) {}
 
+    #[must_use]
     pub fn stat(&self) -> Stat {
         Stat {
             early_pushes: self.stat.early_pushes,
@@ -59,13 +60,15 @@ impl YatcpDownload {
             acks: self.stat.acks,
         }
     }
-
+    
+    #[must_use]
     pub fn recv(&mut self) -> Option<BufFrag> {
         let received = self.recv_buf.pop_front();
         self.check_rep();
         received
     }
-
+    
+    #[must_use]
     pub fn recv_max(&mut self, max_len: usize) -> Option<BufFrag> {
         let leftover = self.leftover.take();
         let frag = if let Some(frag) = leftover {
@@ -91,7 +94,8 @@ impl YatcpDownload {
         final_frag
     }
 
-    pub fn input(&mut self, mut rdr: utils::BufRdr) -> Result<SetUploadState, Error> {
+    #[must_use]
+    pub fn input_packet(&mut self, mut rdr: utils::BufRdr) -> Result<SetUploadState, Error> {
         let partial_state_changes = self.handle_packet(&mut rdr)?;
         let state_changes = SetUploadState {
             remote_rwnd_size: partial_state_changes.remote_rwnd,
@@ -104,6 +108,7 @@ impl YatcpDownload {
         Ok(state_changes)
     }
 
+    #[must_use]
     fn handle_packet(
         &mut self,
         rdr: &mut utils::BufRdr,
@@ -129,7 +134,8 @@ impl YatcpDownload {
         self.stat.packets += 1;
         Ok(state_changes)
     }
-
+    
+    #[must_use]
     fn handle_frags(&mut self, rdr: &mut utils::BufRdr) -> HandleFragsStateChanges {
         let mut remote_seqs_to_ack = Vec::new();
         let mut acked_local_seqs = Vec::new();
@@ -260,7 +266,7 @@ mod tests {
 
         let origin1 = vec![];
         let rdr = BufRdr::from_bytes(origin1);
-        let changes = download.input(rdr);
+        let changes = download.input_packet(rdr);
         assert!(changes.is_err());
     }
 
@@ -289,7 +295,7 @@ mod tests {
         // [packet_header] [push_hdr seq(0)] [11]
 
         let rdr = BufRdr::from_bytes(buf);
-        let changes = download.input(rdr).unwrap();
+        let changes = download.input_packet(rdr).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 1);
         assert_eq!(changes.local_rwnd_size, 2);
         assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -325,7 +331,7 @@ mod tests {
         // [packet_header] [push_hdr seq(1)] [11]
 
         let rdr = BufRdr::from_bytes(buf);
-        let changes = download.input(rdr).unwrap();
+        let changes = download.input_packet(rdr).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(changes.local_rwnd_size, 3);
         assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -359,7 +365,7 @@ mod tests {
         buf.append(&mut push_body1);
 
         let rdr = BufRdr::from_bytes(buf);
-        let changes = download.input(rdr).unwrap();
+        let changes = download.input_packet(rdr).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(changes.local_rwnd_size, 3);
         assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -406,7 +412,7 @@ mod tests {
         buf.append(&mut push_body1);
 
         let rdr = BufRdr::from_bytes(buf);
-        let changes = download.input(rdr).unwrap();
+        let changes = download.input_packet(rdr).unwrap();
         assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(changes.local_rwnd_size, 3);
         assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -456,7 +462,7 @@ mod tests {
             // [packet_header] [push_hdr seq(1)] [1] [push_hdr seq(2)] [2]
 
             let rdr = BufRdr::from_bytes(buf);
-            let changes = download.input(rdr).unwrap();
+            let changes = download.input_packet(rdr).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
             assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -501,7 +507,7 @@ mod tests {
             // [packet_header] [push_hdr seq(0)] [1] [push_hdr seq(3)] [3]
 
             let rdr = BufRdr::from_bytes(buf);
-            let changes = download.input(rdr).unwrap();
+            let changes = download.input_packet(rdr).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 2);
             assert_eq!(changes.local_rwnd_size, 0);
             assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -536,7 +542,7 @@ mod tests {
             // [packet_header] [push_hdr seq(2)] [2]
 
             let rdr = BufRdr::from_bytes(buf);
-            let changes = download.input(rdr).unwrap();
+            let changes = download.input_packet(rdr).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 3);
             assert_eq!(changes.local_rwnd_size, 1);
             assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -572,7 +578,7 @@ mod tests {
             // [packet_header] [push_hdr seq(0)] [2]
 
             let rdr = BufRdr::from_bytes(buf);
-            let changes = download.input(rdr).unwrap();
+            let changes = download.input_packet(rdr).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 3);
             assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -613,7 +619,7 @@ mod tests {
 
         {
             let rdr = BufRdr::from_bytes(buf);
-            let changes = download.input(rdr).unwrap();
+            let changes = download.input_packet(rdr).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 1);
             assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
