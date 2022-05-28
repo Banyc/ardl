@@ -6,8 +6,8 @@ use std::{
     time::{self, Duration, SystemTime},
 };
 
-use crate_yatcp::{
-    layer::{downloader::Downloader, uploader::Uploader, LayerBuilder, SetUploadState},
+use ardl::{
+    layer::{Builder, Downloader, SetUploadState, Uploader},
     protocol::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
     utils::buf::{BufRdr, BufWtr, OwnedBufWtr},
 };
@@ -36,13 +36,13 @@ fn main() {
     let (downloading_messaging_tx, downloading_messaging_rx) = mpsc::sync_channel(0);
     let downloading_messaging_tx = Arc::new(downloading_messaging_tx);
 
-    // yatcp
-    let (yatcp_upload, yatcp_download) = LayerBuilder {
+    // layer
+    let (uploader, downloader) = Builder {
         local_recv_buf_len: LOCAL_RECV_BUF_LEN,
         nack_duplicate_threshold_to_activate_fast_retransmit:
             NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
         ratio_rto_to_one_rtt: RATIO_RTO_TO_ONE_RTT,
-        to_send_byte_cap: TO_SEND_BYTE_CAP,
+        to_send_queue_byte_cap: TO_SEND_BYTE_CAP,
         swnd_size_cap: MAX_SWND_SIZE,
     }
     .build();
@@ -52,8 +52,8 @@ fn main() {
     {
         let uploading_messaging_tx1 = Arc::clone(&uploading_messaging_tx);
         let thread = thread::spawn(move || {
-            yatcp_downloading(
-                yatcp_download,
+            downloading(
+                downloader,
                 downloading_messaging_rx,
                 uploading_messaging_tx1,
             )
@@ -63,7 +63,7 @@ fn main() {
     {
         let connection1 = Arc::clone(&connection);
         let thread = thread::spawn(move || {
-            yatcp_uploading(connection1, yatcp_upload, uploading_messaging_rx);
+            uploading(connection1, uploader, uploading_messaging_rx);
         });
         threads.push(thread);
     }
@@ -127,7 +127,7 @@ fn stat_timer(
     }
 }
 
-fn yatcp_uploading(
+fn uploading(
     connection: Arc<UdpSocket>,
     mut upload: Uploader,
     messaging: mpsc::Receiver<UploadingMessaging>,
@@ -169,7 +169,7 @@ fn yatcp_uploading(
     }
 }
 
-fn yatcp_downloading(
+fn downloading(
     mut download: Downloader,
     messaging: mpsc::Receiver<DownloadingMessaging>,
     uploading_messaging_tx: Arc<mpsc::SyncSender<UploadingMessaging>>,

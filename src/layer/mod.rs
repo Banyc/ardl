@@ -1,29 +1,26 @@
 use crate::utils::Seq;
 
-use self::{
-    downloader::{Downloader, DownloaderBuilder},
-    uploader::{Uploader, UploaderBuilder},
-};
+mod downloader;
+pub use downloader::*;
+mod uploader;
+pub use uploader::*;
 
-pub mod downloader;
-pub mod uploader;
-
-pub struct LayerBuilder {
+pub struct Builder {
     pub local_recv_buf_len: usize,
     pub nack_duplicate_threshold_to_activate_fast_retransmit: usize,
     pub ratio_rto_to_one_rtt: f64,
-    pub to_send_byte_cap: usize,
+    pub to_send_queue_byte_cap: usize,
     pub swnd_size_cap: usize,
 }
 
-impl LayerBuilder {
+impl Builder {
     pub fn build(self) -> (Uploader, Downloader) {
         let upload = UploaderBuilder {
             local_recv_buf_len: self.local_recv_buf_len,
             nack_duplicate_threshold_to_activate_fast_retransmit: self
                 .nack_duplicate_threshold_to_activate_fast_retransmit,
             ratio_rto_to_one_rtt: self.ratio_rto_to_one_rtt,
-            to_send_byte_cap: self.to_send_byte_cap,
+            to_send_queue_byte_cap: self.to_send_queue_byte_cap,
             swnd_size_cap: self.swnd_size_cap,
         }
         .build();
@@ -50,23 +47,23 @@ mod tests {
 
     use crate::utils::buf::{BufRdr, BufWtr, OwnedBufWtr};
 
-    use super::LayerBuilder;
+    use super::Builder;
 
     #[test]
     fn test_few_1() {
-        let (mut upload1, mut download1) = LayerBuilder {
+        let (mut upload1, mut download1) = Builder {
             local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_cap: usize::MAX,
+            to_send_queue_byte_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
-        let (mut upload2, mut download2) = LayerBuilder {
+        let (mut upload2, mut download2) = Builder {
             local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_cap: usize::MAX,
+            to_send_queue_byte_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
@@ -117,19 +114,19 @@ mod tests {
 
     #[test]
     fn test_rto() {
-        let (mut upload1, mut _download1) = LayerBuilder {
+        let (mut upload1, mut _download1) = Builder {
             local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_cap: usize::MAX,
+            to_send_queue_byte_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
-        let (mut upload2, mut download2) = LayerBuilder {
+        let (mut upload2, mut download2) = Builder {
             local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_cap: usize::MAX,
+            to_send_queue_byte_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();

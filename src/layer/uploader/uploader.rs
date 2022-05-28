@@ -49,7 +49,7 @@ pub struct UploaderBuilder {
     pub local_recv_buf_len: usize,
     pub nack_duplicate_threshold_to_activate_fast_retransmit: usize,
     pub ratio_rto_to_one_rtt: f64,
-    pub to_send_byte_cap: usize,
+    pub to_send_queue_byte_cap: usize,
     pub swnd_size_cap: usize,
 }
 
@@ -57,7 +57,7 @@ impl UploaderBuilder {
     #[must_use]
     pub fn build(self) -> Uploader {
         let this = Uploader {
-            to_send_queue: BufSlicer::new(self.to_send_byte_cap),
+            to_send_queue: BufSlicer::new(self.to_send_queue_byte_cap),
             swnd: Swnd::new(self.swnd_size_cap),
             to_ack_queue: VecDeque::new(),
             local_rwnd_size: self.local_recv_buf_len,
@@ -86,7 +86,7 @@ impl UploaderBuilder {
             local_recv_buf_len: u16::MAX as usize,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_cap: 1024 * 64,
+            to_send_queue_byte_cap: 1024 * 64,
             swnd_size_cap: u16::MAX as usize,
         };
         builder
@@ -705,7 +705,7 @@ mod tests {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_cap: usize::MAX,
+            to_send_queue_byte_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
@@ -755,7 +755,7 @@ mod tests {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_cap: usize::MAX,
+            to_send_queue_byte_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
@@ -809,7 +809,7 @@ mod tests {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_cap: usize::MAX,
+            to_send_queue_byte_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
@@ -876,7 +876,7 @@ mod tests {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
-            to_send_byte_cap: usize::MAX,
+            to_send_queue_byte_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
         .build();
