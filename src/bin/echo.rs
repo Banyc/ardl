@@ -6,11 +6,9 @@ use std::{
 };
 
 use crate_yatcp::{
-    protocols::yatcp::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
+    layer::{downloader::Downloader, uploader::Uploader, LayerBuilder, SetUploadState},
+    protocol::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
     utils::{BufRdr, BufWtr, OwnedBufWtr},
-    yatcp::{
-        yatcp_download::YatcpDownload, yatcp_upload::YatcpUpload, SetUploadState, YatcpBuilder,
-    },
 };
 
 // const MTU: usize = 512;
@@ -37,7 +35,7 @@ fn main() {
     let downloading_messaging_tx = Arc::new(downloading_messaging_tx);
 
     // yatcp
-    let (yatcp_upload, yatcp_download) = YatcpBuilder {
+    let (yatcp_upload, yatcp_download) = LayerBuilder {
         local_recv_buf_len: LOCAL_RECV_BUF_LEN,
         nack_duplicate_threshold_to_activate_fast_retransmit:
             NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
@@ -126,7 +124,7 @@ fn stat_timer(
 
 fn yatcp_uploading(
     listener: Arc<UdpSocket>,
-    mut upload: YatcpUpload,
+    mut upload: Uploader,
     messaging: mpsc::Receiver<UploadingMessaging>,
 ) {
     let mut old_stat = None;
@@ -175,7 +173,7 @@ fn yatcp_uploading(
 }
 
 fn yatcp_downloading(
-    mut download: YatcpDownload,
+    mut download: Downloader,
     messaging: mpsc::Receiver<DownloadingMessaging>,
     uploading_messaging_tx: Arc<mpsc::SyncSender<UploadingMessaging>>,
 ) {

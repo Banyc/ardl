@@ -4,11 +4,11 @@ use std::{
 };
 
 use crate::{
-    protocols::yatcp::{
+    protocol::{
         frag_hdr::{FragCommand, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN},
         packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
-    utils::{self, BufPasta, BufWtr, FastRetransmissionWnd, Seq, SubBufWtr, Swnd, BufSlicer},
+    utils::{self, BufPasta, BufSlicer, BufWtr, FastRetransmissionWnd, Seq, SubBufWtr, Swnd},
 };
 
 use super::{sending_frag::SendingFrag, SetUploadState};
@@ -21,7 +21,7 @@ static MAX_RTO: time::Duration = Duration::from_millis(MAX_RTO_MS);
 static DEFAULT_RTO: time::Duration = Duration::from_millis(DEFAULT_RTO_MS);
 static MIN_RTO: time::Duration = Duration::from_millis(MIN_RTO_MS);
 
-pub struct YatcpUpload {
+pub struct Uploader {
     // modified by `append_frags_to`
     to_send_queue: utils::BufSlicer,
     swnd: Swnd<SendingFrag>,
@@ -42,7 +42,7 @@ pub struct YatcpUpload {
     disable_rto: bool,
 }
 
-pub struct YatcpUploadBuilder {
+pub struct UploaderBuilder {
     pub local_recv_buf_len: usize,
     pub nack_duplicate_threshold_to_activate_fast_retransmit: usize,
     pub ratio_rto_to_one_rtt: f64,
@@ -50,10 +50,10 @@ pub struct YatcpUploadBuilder {
     pub swnd_size_cap: usize,
 }
 
-impl YatcpUploadBuilder {
+impl UploaderBuilder {
     #[must_use]
-    pub fn build(self) -> YatcpUpload {
-        let this = YatcpUpload {
+    pub fn build(self) -> Uploader {
+        let this = Uploader {
             to_send_queue: BufSlicer::new(self.to_send_byte_cap),
             swnd: Swnd::new(self.swnd_size_cap),
             to_ack_queue: VecDeque::new(),
@@ -78,7 +78,7 @@ impl YatcpUploadBuilder {
     }
 
     #[must_use]
-    pub fn default() -> YatcpUploadBuilder {
+    pub fn default() -> UploaderBuilder {
         let builder = Self {
             local_recv_buf_len: u16::MAX as usize,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
@@ -95,7 +95,7 @@ pub enum SetStateError {
     InvalidState,
 }
 
-impl YatcpUpload {
+impl Uploader {
     #[inline]
     fn check_rep(&self) {}
 
@@ -400,16 +400,16 @@ mod tests {
     use std::thread;
 
     use crate::{
-        protocols::yatcp::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
+        layer::{uploader::UploaderBuilder, SetUploadState},
+        protocol::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
         utils::{BufRdr, BufWtr, OwnedBufWtr, Seq},
-        yatcp::{yatcp_upload::YatcpUploadBuilder, SetUploadState},
     };
 
     const MTU: usize = 512;
 
     #[test]
     fn test_empty() {
-        let mut upload = YatcpUploadBuilder::default().build();
+        let mut upload = UploaderBuilder::default().build();
         let buf = OwnedBufWtr::new(MTU / 2, 0);
         let rdr = BufRdr::from_wtr(buf);
         upload.to_send(rdr).map_err(|_| ()).unwrap();
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_few_1() {
-        let mut upload = YatcpUploadBuilder::default().build();
+        let mut upload = UploaderBuilder::default().build();
         upload.disable_rto = true;
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin = vec![0, 1, 2];
@@ -446,7 +446,7 @@ mod tests {
 
     #[test]
     fn test_few_2() {
-        let mut upload = YatcpUploadBuilder::default().build();
+        let mut upload = UploaderBuilder::default().build();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn test_few_many() {
-        let mut upload = YatcpUploadBuilder::default().build();
+        let mut upload = UploaderBuilder::default().build();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
@@ -542,7 +542,7 @@ mod tests {
 
     #[test]
     fn test_many_few() {
-        let mut upload = YatcpUploadBuilder::default().build();
+        let mut upload = UploaderBuilder::default().build();
         let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin1 = vec![3; MTU];
         buf.append(&origin1).unwrap();
@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn test_ack1() {
-        let mut upload = YatcpUploadBuilder::default().build();
+        let mut upload = UploaderBuilder::default().build();
         upload.set_remote_rwnd_size(2);
 
         let origin1 = vec![0, 1, 2];
@@ -654,7 +654,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_not_enough_space_for_push() {
-        let mut upload = YatcpUploadBuilder::default().build();
+        let mut upload = UploaderBuilder::default().build();
         upload.set_remote_rwnd_size(2);
 
         let origin1 = vec![0, 1, 2];
@@ -668,7 +668,7 @@ mod tests {
 
     #[test]
     fn test_rto_once() {
-        let mut upload = YatcpUploadBuilder::default().build();
+        let mut upload = UploaderBuilder::default().build();
         upload.set_remote_rwnd_size(2);
 
         let origin1 = vec![0, 1, 2];
@@ -695,7 +695,7 @@ mod tests {
     #[test]
     fn test_fast_retransmit1() {
         let dup = 1;
-        let mut upload = YatcpUploadBuilder {
+        let mut upload = UploaderBuilder {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
@@ -745,7 +745,7 @@ mod tests {
     #[test]
     fn test_fast_retransmit_no() {
         let dup = 0;
-        let mut upload = YatcpUploadBuilder {
+        let mut upload = UploaderBuilder {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
@@ -799,7 +799,7 @@ mod tests {
     #[test]
     fn test_fast_retransmit2() {
         let dup = 0;
-        let mut upload = YatcpUploadBuilder {
+        let mut upload = UploaderBuilder {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,
@@ -866,7 +866,7 @@ mod tests {
     #[test]
     fn test_fast_retransmit3() {
         let dup = 1;
-        let mut upload = YatcpUploadBuilder {
+        let mut upload = UploaderBuilder {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: dup,
             ratio_rto_to_one_rtt: 1.5,

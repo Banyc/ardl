@@ -1,5 +1,5 @@
 use crate::{
-    protocols::yatcp::{
+    protocol::{
         frag_hdr::{FragCommand, FragHeader},
         packet_hdr::PacketHeader,
     },
@@ -8,19 +8,19 @@ use crate::{
 
 use super::SetUploadState;
 
-pub struct YatcpDownload {
+pub struct Downloader {
     recv_buf: RecvBuf<BufFrag>,
     leftover: Option<BufFrag>,
     stat: LocalStat,
 }
 
-pub struct YatcpDownloadBuilder {
+pub struct DownloaderBuilder {
     pub recv_buf_len: usize,
 }
 
-impl YatcpDownloadBuilder {
-    pub fn build(self) -> YatcpDownload {
-        let this = YatcpDownload {
+impl DownloaderBuilder {
+    pub fn build(self) -> Downloader {
+        let this = Downloader {
             recv_buf: RecvBuf::new(self.recv_buf_len),
             leftover: None,
             stat: LocalStat {
@@ -43,7 +43,7 @@ pub enum Error {
     Decoding,
 }
 
-impl YatcpDownload {
+impl Downloader {
     #[inline]
     fn check_rep(&self) {}
 
@@ -60,14 +60,14 @@ impl YatcpDownload {
             acks: self.stat.acks,
         }
     }
-    
+
     #[must_use]
     pub fn recv(&mut self) -> Option<BufFrag> {
         let received = self.recv_buf.pop_front();
         self.check_rep();
         received
     }
-    
+
     #[must_use]
     pub fn recv_max(&mut self, max_len: usize) -> Option<BufFrag> {
         let leftover = self.leftover.take();
@@ -134,7 +134,7 @@ impl YatcpDownload {
         self.stat.packets += 1;
         Ok(state_changes)
     }
-    
+
     #[must_use]
     fn handle_frags(&mut self, rdr: &mut utils::BufRdr) -> HandleFragsStateChanges {
         let mut remote_seqs_to_ack = Vec::new();
@@ -251,18 +251,18 @@ pub struct Stat {
 #[cfg(test)]
 mod tests {
     use crate::{
-        protocols::yatcp::{
+        protocol::{
             frag_hdr::{FragCommand, FragHeaderBuilder},
             packet_hdr::PacketHeaderBuilder,
         },
         utils::{BufRdr, Seq},
     };
 
-    use super::YatcpDownloadBuilder;
+    use super::DownloaderBuilder;
 
     #[test]
     fn test_empty() {
-        let mut download = YatcpDownloadBuilder { recv_buf_len: 3 }.build();
+        let mut download = DownloaderBuilder { recv_buf_len: 3 }.build();
 
         let origin1 = vec![];
         let rdr = BufRdr::from_bytes(origin1);
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_few_1() {
-        let mut download = YatcpDownloadBuilder { recv_buf_len: 3 }.build();
+        let mut download = DownloaderBuilder { recv_buf_len: 3 }.build();
 
         let mut buf = Vec::new();
         let packet_hdr = PacketHeaderBuilder {
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn test_out_of_order() {
-        let mut download = YatcpDownloadBuilder { recv_buf_len: 3 }.build();
+        let mut download = DownloaderBuilder { recv_buf_len: 3 }.build();
 
         let mut buf = Vec::new();
         let packet_hdr = PacketHeaderBuilder {
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_out_of_window1() {
-        let mut download = YatcpDownloadBuilder { recv_buf_len: 3 }.build();
+        let mut download = DownloaderBuilder { recv_buf_len: 3 }.build();
 
         let mut buf = Vec::new();
         let packet_hdr = PacketHeaderBuilder {
@@ -377,7 +377,7 @@ mod tests {
 
     #[test]
     fn test_ack() {
-        let mut download = YatcpDownloadBuilder { recv_buf_len: 3 }.build();
+        let mut download = DownloaderBuilder { recv_buf_len: 3 }.build();
 
         let mut buf = Vec::new();
         let packet_hdr = PacketHeaderBuilder {
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_rwnd_proceeding() {
-        let mut download = YatcpDownloadBuilder { recv_buf_len: 2 }.build();
+        let mut download = DownloaderBuilder { recv_buf_len: 2 }.build();
 
         {
             let mut buf = Vec::new();
@@ -591,7 +591,7 @@ mod tests {
 
     #[test]
     fn test_recv_max() {
-        let mut download = YatcpDownloadBuilder { recv_buf_len: 3 }.build();
+        let mut download = DownloaderBuilder { recv_buf_len: 3 }.build();
 
         let mut buf = Vec::new();
         {
