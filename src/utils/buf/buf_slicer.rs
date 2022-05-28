@@ -79,7 +79,7 @@ mod tests {
 
         let slice1 = slicer.slice_front(2);
         assert_eq!(slice1.data(), vec![0]);
-        
+
         let slice2 = slicer.slice_front(1);
         assert_eq!(slice2.data(), vec![1]);
 
