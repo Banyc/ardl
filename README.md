@@ -26,3 +26,6 @@
 - cmd: command
 - len: length
 - utils: utilities
+- rto: retransmission timeout
+- rtt: round trip time
+- addr: address
