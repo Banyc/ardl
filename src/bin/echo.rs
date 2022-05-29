@@ -19,8 +19,8 @@ const LISTEN_ADDR: &str = "0.0.0.0:19479";
 const LOCAL_RECV_BUF_LEN: usize = 2;
 const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 0;
 const RATIO_RTO_TO_ONE_RTT: f64 = 1.5;
-// const TO_SEND_BYTE_CAP: usize = 1024 * 64;
-const TO_SEND_BYTE_CAP: usize = 1;
+// const TO_SEND_QUEUE_LEN_CAP: usize = 1024 * 64;
+const TO_SEND_QUEUE_LEN_CAP: usize = 1;
 const SWND_SIZE_CAP: usize = usize::MAX;
 
 fn main() {
@@ -44,7 +44,7 @@ fn main() {
         nack_duplicate_threshold_to_activate_fast_retransmit:
             NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
         ratio_rto_to_one_rtt: RATIO_RTO_TO_ONE_RTT,
-        to_send_queue_len_cap: TO_SEND_BYTE_CAP,
+        to_send_queue_len_cap: TO_SEND_QUEUE_LEN_CAP,
         swnd_size_cap: SWND_SIZE_CAP,
     }
     .build();
