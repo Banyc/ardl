@@ -109,6 +109,7 @@ pub enum SetStateError {
 #[derive(Debug)]
 pub enum OutputError {
     NothingToOutput,
+    BufferTooSmall,
 }
 
 pub struct SendError<T>(pub T);
@@ -155,35 +156,41 @@ impl Uploader {
 
     pub fn output_packet(&mut self, wtr: &mut impl BufWtr) -> Result<(), OutputError> {
         let is_then_full = self.to_send_queue.is_full();
-        let result = self.append_packet_to(wtr);
-        if result.is_ok() {
-            // callback when `to_send` is not full
-            if let Some(x) = &self.on_send_available {
-                let is_now_full = self.to_send_queue.is_full();
-                // match is_then_full {
-                //     true => println!("[uploader] before output: full"),
-                //     false => println!("[uploader] before output: not full"),
-                // }
-                // match is_now_full {
-                //     true => println!("[uploader] after output: full"),
-                //     false => println!("[uploader] after output: not full"),
-                // }
-                match (is_then_full, is_now_full) {
-                    (true, false) => match x.upgrade() {
-                        Some(x) => x.notify(),
-                        None => (),
-                    },
-                    _ => (),
-                }
+        self.append_packet_to(wtr)?;
+
+        // callback when `to_send` is not full
+        if let Some(x) = &self.on_send_available {
+            let is_now_full = self.to_send_queue.is_full();
+            // match is_then_full {
+            //     true => println!("[uploader] before output: full"),
+            //     false => println!("[uploader] before output: not full"),
+            // }
+            // match is_now_full {
+            //     true => println!("[uploader] after output: full"),
+            //     false => println!("[uploader] after output: not full"),
+            // }
+            match (is_then_full, is_now_full) {
+                (true, false) => match x.upgrade() {
+                    Some(x) => x.notify(),
+                    None => (),
+                },
+                _ => (),
             }
         }
+
         self.check_rep();
-        result
+        Ok(())
     }
 
     fn append_packet_to(&mut self, wtr: &mut impl BufWtr) -> Result<(), OutputError> {
-        assert!(PACKET_HDR_LEN + ACK_HDR_LEN <= wtr.back_len());
-        assert!(PACKET_HDR_LEN + PUSH_HDR_LEN + 1 <= wtr.back_len());
+        if !(PACKET_HDR_LEN + ACK_HDR_LEN <= wtr.back_len()) {
+            self.check_rep();
+            return Err(OutputError::BufferTooSmall);
+        }
+        if !(PACKET_HDR_LEN + PUSH_HDR_LEN + 1 <= wtr.back_len()) {
+            self.check_rep();
+            return Err(OutputError::BufferTooSmall);
+        }
 
         let mut sub_wtr = SubBufWtr::new(wtr.back_free_space(), PACKET_HDR_LEN);
 
@@ -478,6 +485,8 @@ mod tests {
         },
     };
 
+    use super::OutputError;
+
     const MTU: usize = 512;
 
     #[test]
@@ -728,7 +737,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn test_not_enough_space_for_push() {
         let mut upload = UploaderBuilder::default().build();
         upload.set_remote_rwnd_size(2);
@@ -739,7 +747,13 @@ mod tests {
             upload.to_send(slice).map_err(|_| ()).unwrap();
         }
         let mut packet = OwnedBufWtr::new(PACKET_HDR_LEN + PUSH_HDR_LEN, 0);
-        let _ = upload.output_packet(&mut packet);
+        match upload.output_packet(&mut packet) {
+            Ok(_) => panic!(),
+            Err(e) => match e {
+                OutputError::NothingToOutput => panic!(),
+                OutputError::BufferTooSmall => (),
+            },
+        }
     }
 
     #[test]

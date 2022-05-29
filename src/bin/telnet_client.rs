@@ -7,7 +7,7 @@ use std::{
 };
 
 use ardl::{
-    layer::{Builder, Downloader, IObserver, SetUploadState, Uploader},
+    layer::{Builder, Downloader, IObserver, OutputError, SetUploadState, Uploader},
     protocol::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
     utils::buf::{BufSlice, BufWtr, OwnedBufWtr},
 };
@@ -151,8 +151,14 @@ fn uploading(
             }
             UploadingMessaging::Flush => {
                 let mut wtr = OwnedBufWtr::new(MTU, 0);
-                if let Ok(()) = uploader.output_packet(&mut wtr) {
-                    connection.send(wtr.data()).unwrap();
+                match uploader.output_packet(&mut wtr) {
+                    Ok(_) => {
+                        connection.send(wtr.data()).unwrap();
+                    }
+                    Err(e) => match e {
+                        OutputError::NothingToOutput => (),
+                        OutputError::BufferTooSmall => panic!(),
+                    },
                 }
             }
             UploadingMessaging::ToSend(slice, responser) => match uploader.to_send(slice) {
