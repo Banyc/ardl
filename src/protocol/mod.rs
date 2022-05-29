@@ -28,8 +28,8 @@
 //! (Packet header)
 //! (Fragment header of type Ack)*
 //! (Fragment header of type Ack)*
-//! ((Fragment header of type Push) (body))*
-//! ((Fragment header of type Push) (body))*
+//! ((Fragment header of type Push) (Body))*
+//! ((Fragment header of type Push) (Body))*
 //! ```
 //!
 //! # Invariants
