@@ -478,7 +478,10 @@ mod tests {
 
     use crate::{
         layer::{uploader::UploaderBuilder, SetUploadState},
-        protocol::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
+        protocol::{
+            frag_hdr::{ACK_HDR_LEN, PUSH_HDR_LEN},
+            packet_hdr::PACKET_HDR_LEN,
+        },
         utils::{
             buf::{BufSlice, BufWtr, OwnedBufWtr},
             Seq,
@@ -1035,5 +1038,111 @@ mod tests {
         let result = upload.output_packet(&mut packet);
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_multiple_frags() {
+        let mut uploader = UploaderBuilder {
+            local_recv_buf_len: 0,
+            nack_duplicate_threshold_to_activate_fast_retransmit: 0,
+            ratio_rto_to_one_rtt: 1.5,
+            to_send_queue_len_cap: usize::MAX,
+            swnd_size_cap: usize::MAX,
+        }
+        .build();
+        // uploader.disable_rto = true;
+
+        //           0  1  2  3
+        // to_ack
+        // swnd    ][
+        // to_send  []
+
+        uploader
+            .to_send(BufSlice::from_bytes(vec![9, 8, 7]))
+            .map_err(|_| ())
+            .unwrap();
+
+        //           0  1  2  3
+        // to_ack
+        // swnd    ][
+        // to_send  [[9, 8, 7]]
+        assert!(!uploader.to_send_queue.is_empty());
+        assert!(uploader.swnd.is_empty());
+
+        uploader
+            .set_state(SetUploadState {
+                remote_rwnd_size: 99,
+                remote_nack: Seq::from_u32(2),
+                local_next_seq_to_receive: Seq::from_u32(88),
+                remote_seqs_to_ack: vec![Seq::from_u32(0), Seq::from_u32(1)],
+                acked_local_seqs: Vec::new(),
+                local_rwnd_size: 99,
+            })
+            .unwrap();
+
+        //           0  1  2  3
+        // to_ack    x  x
+        // swnd    ][
+        // to_send  [[9, 8, 7]]
+        assert_eq!(uploader.to_ack_queue.len(), 2);
+
+        let mut wtr = OwnedBufWtr::new(PACKET_HDR_LEN + ACK_HDR_LEN * 2 + PUSH_HDR_LEN + 1, 0);
+        uploader.output_packet(&mut wtr).unwrap();
+
+        //           0  1  2  3
+        // to_ack
+        // swnd     [ ]
+        // to_send  [[8, 7]]
+        assert!(uploader.to_ack_queue.is_empty());
+        assert_eq!(uploader.swnd.size(), 1);
+
+        assert_eq!(
+            wtr.data(),
+            vec![
+                0, 99, // rwnd
+                0, 0, 0, 88, // nack
+                // ack
+                0, 0, 0, 0, // seq
+                1, // cmd: Ack
+                // ack
+                0, 0, 0, 1, // seq
+                1, // cmd: Ack
+                // push
+                0, 0, 0, 0, // seq
+                0, // cmd: Push
+                0, 0, 0, 1, // len
+                9, // body
+            ]
+        );
+
+        thread::sleep(uploader.rto());
+
+        let mut wtr = OwnedBufWtr::new(PACKET_HDR_LEN + PUSH_HDR_LEN + 1 + PUSH_HDR_LEN + 2, 0);
+        uploader.output_packet(&mut wtr).unwrap();
+
+        //           0  1  2  3
+        // to_ack
+        // swnd     [    ]
+        // to_send  []
+        assert!(uploader.to_send_queue.is_empty());
+        assert_eq!(uploader.swnd.size(), 2);
+
+        assert_eq!(
+            wtr.data(),
+            vec![
+                0, 99, // rwnd
+                0, 0, 0, 88, // nack
+                // push
+                0, 0, 0, 0, // seq
+                0, // cmd: Push
+                0, 0, 0, 1, // len
+                9, // body
+                // push
+                0, 0, 0, 1, // seq
+                0, // cmd: Push
+                0, 0, 0, 2, // len
+                8, 7 // body
+            ]
+        );
     }
 }

@@ -69,6 +69,7 @@ impl<T> Swnd<T> {
         }
     }
 
+    /// Unit: sequence
     #[must_use]
     pub fn size(&self) -> usize {
         self.end.sub_seq(self.start()) as usize
