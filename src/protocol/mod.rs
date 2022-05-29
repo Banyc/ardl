@@ -36,5 +36,16 @@
 //!
 //! - `len` (`Push`) should not be `0`
 
-pub mod frag_hdr;
+pub mod frag;
+pub mod packet;
 pub mod packet_hdr;
+
+#[derive(Debug)]
+pub enum DecodingError {
+    Decoding { field: &'static str },
+}
+
+#[derive(Debug)]
+pub enum EncodingError {
+    NotEnoughSpace,
+}

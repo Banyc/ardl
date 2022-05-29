@@ -37,6 +37,11 @@ impl BufSlice {
         assert!(self.range.end <= self.buf.data_len());
     }
 
+    pub fn clone(slice: &Self) -> Self {
+        let clone = slice.slice(0..slice.len()).unwrap();
+        clone
+    }
+
     pub fn from_wtr(wtr: OwnedBufWtr) -> Self {
         let data_len = wtr.data_len();
         let this = BufSliceBuilder {
@@ -198,5 +203,12 @@ mod tests {
         assert!(buf.is_empty());
         let slice_err = buf.pop_front(1);
         assert!(slice_err.is_err());
+    }
+
+    #[test]
+    fn clone() {
+        let slice1 = BufSlice::from_bytes(vec![0, 1, 2, 3, 4, 5]);
+        let slice2 = BufSlice::clone(&slice1);
+        assert_eq!(slice1.data(), slice2.data());
     }
 }

@@ -1,16 +1,17 @@
 use std::{
     collections::VecDeque,
-    sync::Weak,
+    sync::{Arc, Weak},
     time::{self, Duration},
 };
 
 use crate::{
     protocol::{
-        frag_hdr::{FragCommand, FragHeaderBuilder, ACK_HDR_LEN, PUSH_HDR_LEN},
+        frag::{Body, Frag, FragBuilder, FragCommand, ACK_HDR_LEN, PUSH_HDR_LEN},
+        packet::PacketBuilder,
         packet_hdr::{PacketHeaderBuilder, PACKET_HDR_LEN},
     },
     utils::{
-        buf::{self, BufPasta, BufSlicerQue, BufWtr, SubBufWtr},
+        buf::{self, BufPasta, BufSlicerQue, BufWtr},
         FastRetransmissionWnd, Seq, Swnd,
     },
 };
@@ -139,18 +140,10 @@ impl Uploader {
     }
 
     pub fn to_send(&mut self, slice: buf::BufSlice) -> Result<(), SendError<buf::BufSlice>> {
-        // match self.to_send_queue.is_full() {
-        //     true => println!("[uploader] before send: full"),
-        //     false => println!("[uploader] before send: not full"),
-        // }
         let result = match self.to_send_queue.push_back(slice) {
             Ok(_) => Ok(()),
             Err(e) => Err(SendError(e.0)),
         };
-        // match self.to_send_queue.is_full() {
-        //     true => println!("[uploader] after send: full"),
-        //     false => println!("[uploader] after send: not full"),
-        // }
         result
     }
 
@@ -161,14 +154,6 @@ impl Uploader {
         // callback when `to_send` is not full
         if let Some(x) = &self.on_send_available {
             let is_now_full = self.to_send_queue.is_full();
-            // match is_then_full {
-            //     true => println!("[uploader] before output: full"),
-            //     false => println!("[uploader] before output: not full"),
-            // }
-            // match is_now_full {
-            //     true => println!("[uploader] after output: full"),
-            //     false => println!("[uploader] after output: not full"),
-            // }
             match (is_then_full, is_now_full) {
                 (true, false) => match x.upgrade() {
                     Some(x) => x.notify(),
@@ -192,12 +177,9 @@ impl Uploader {
             return Err(OutputError::BufferTooSmall);
         }
 
-        let mut sub_wtr = SubBufWtr::new(wtr.back_free_space(), PACKET_HDR_LEN);
+        let frags = self.collect_frags(wtr.back_len() - PACKET_HDR_LEN);
 
-        self.append_frags_to(&mut sub_wtr);
-        let is_written = !sub_wtr.is_empty();
-
-        if is_written {
+        if !frags.is_empty() {
             // packet header
             let hdr = PacketHeaderBuilder {
                 rwnd: self.local_rwnd_size as u16,
@@ -205,13 +187,10 @@ impl Uploader {
             }
             .build()
             .unwrap();
-            let bytes = hdr.to_bytes();
-            assert_eq!(bytes.len(), PACKET_HDR_LEN);
-            sub_wtr.prepend(&bytes).unwrap();
 
-            let sub_wtr_len = sub_wtr.data_len();
-            wtr.grow_back(sub_wtr_len).unwrap();
+            let packet = PacketBuilder { hdr, frags }.build().unwrap();
 
+            packet.append_to(wtr).unwrap();
             self.check_rep();
             Ok(())
         } else {
@@ -221,48 +200,48 @@ impl Uploader {
     }
 
     #[inline]
-    fn append_frags_to(&mut self, wtr: &mut impl BufWtr) {
+    fn collect_frags(&mut self, mut space: usize) -> Vec<Frag> {
+        let mut frags = Vec::new();
         if self.to_ack_queue.is_empty() && self.swnd.is_empty() && self.to_send_queue.is_empty() {
-            assert!(wtr.is_empty());
-            return;
+            assert!(frags.is_empty());
+            return frags;
         }
 
         // piggyback ack
         loop {
-            if !(ACK_HDR_LEN <= wtr.back_len()) {
+            if !(ACK_HDR_LEN <= space) {
                 self.check_rep();
-                assert!(!wtr.is_empty());
-                return;
+                assert!(!frags.is_empty());
+                return frags;
             }
             let ack = match self.to_ack_queue.pop_front() {
                 Some(ack) => ack,
                 None => break,
             };
-            let hdr = FragHeaderBuilder {
+            let frag = FragBuilder {
                 seq: ack,
                 cmd: FragCommand::Ack,
             }
             .build()
             .unwrap();
-            let bytes = hdr.to_bytes();
-            assert_eq!(bytes.len(), ACK_HDR_LEN);
-            wtr.append(&bytes).unwrap();
+            space -= frag.len();
+            frags.push(frag);
             self.stat.acks += 1;
         }
 
         // retransmission
         // write pushes from sending
         let rto = self.rto();
-        for (&seq, frag) in self.swnd.iter_mut() {
-            if !(PUSH_HDR_LEN + 1 <= wtr.back_len()) {
+        for (&seq, push) in self.swnd.iter_mut() {
+            if !(PUSH_HDR_LEN + 1 <= space) {
                 self.check_rep();
-                assert!(!wtr.is_empty());
-                return;
+                assert!(!frags.is_empty());
+                return frags;
             }
-            if !(frag.body().len() + PUSH_HDR_LEN <= wtr.back_len()) {
+            if !(push.body().len() + PUSH_HDR_LEN <= space) {
                 continue;
             }
-            let is_timeout = frag.is_timeout(&rto);
+            let is_timeout = push.is_timeout(&rto);
             let if_fast_retransmit = self.fast_retransmission_wnd.contains(seq);
             if !(
                 // fast retransmit
@@ -271,19 +250,17 @@ impl Uploader {
             ) {
                 continue;
             }
-            let hdr = FragHeaderBuilder {
+            let frag = FragBuilder {
                 seq,
                 cmd: FragCommand::Push {
-                    len: frag.body().len() as u32,
+                    body: Body::Pasta(Arc::clone(push.body())),
                 },
             }
             .build()
             .unwrap();
-            let bytes = hdr.to_bytes();
-            assert_eq!(bytes.len(), PUSH_HDR_LEN);
-            wtr.append(&bytes).unwrap();
-            frag.body().append_to(wtr).unwrap();
-            frag.to_retransmit(); // test case: `test_rto_once`
+            space -= frag.len();
+            frags.push(frag);
+            push.to_retransmit(); // test case: `test_rto_once`
             if if_fast_retransmit {
                 self.fast_retransmission_wnd.retransmitted(seq); // test case: `test_fast_retransmit`
                 self.stat.fast_retransmissions += 1;
@@ -297,61 +274,59 @@ impl Uploader {
 
         if self.to_send_queue.is_empty() {
             self.check_rep();
-            return;
+            return frags;
         }
-        if !(PUSH_HDR_LEN < wtr.back_len()) {
+        if !(PUSH_HDR_LEN < space) {
             self.check_rep();
-            assert!(!wtr.is_empty());
-            return;
+            assert!(!frags.is_empty());
+            return frags;
         }
         if self.swnd.is_full() {
             self.check_rep();
-            return;
+            return frags;
         }
 
         // move data from to_send queue to sending queue and output those data
         {
             // get as many bytes from to_send_queue
             // call those bytes "frag"
-            let frag_body_limit = wtr.back_len() - PUSH_HDR_LEN;
+            let frag_body_limit = space - PUSH_HDR_LEN;
             assert!(frag_body_limit != 0);
-            let mut frag_body = BufPasta::new();
+            let mut body = BufPasta::new();
             while !self.to_send_queue.is_empty() {
-                let free_space = frag_body_limit - frag_body.len();
+                let free_space = frag_body_limit - body.len();
                 if free_space == 0 {
                     break;
                 }
                 let buf = self.to_send_queue.slice_front(free_space).unwrap();
-                frag_body.append(buf);
+                body.append(buf);
             }
-            assert!(frag_body.len() <= frag_body_limit);
-            assert!(frag_body.len() > 0);
+            assert!(body.len() <= frag_body_limit);
+            assert!(body.len() > 0);
 
-            let frag = SendingFrag::new(frag_body);
+            let push = SendingFrag::new(Arc::new(body));
 
             // write the frag to output buffer
-            let hdr = FragHeaderBuilder {
+            let frag = FragBuilder {
                 seq: self.swnd.end(),
                 cmd: FragCommand::Push {
-                    len: frag.body().len() as u32,
+                    body: Body::Pasta(Arc::clone(push.body())),
                 },
             }
             .build()
             .unwrap();
-            let bytes = hdr.to_bytes();
-            assert_eq!(bytes.len(), PUSH_HDR_LEN);
-            wtr.append(&bytes).unwrap();
-            frag.body().append_to(wtr).unwrap();
+            assert!(frag.len() <= space);
+            frags.push(frag);
 
             // register the frag to swnd
-            self.swnd.push_back(frag);
+            self.swnd.push_back(push);
 
             self.stat.pushes += 1;
         }
 
         self.check_rep();
-        assert!(!wtr.is_empty());
-        return;
+        assert!(!frags.is_empty());
+        return frags;
     }
 
     #[must_use]
@@ -479,7 +454,7 @@ mod tests {
     use crate::{
         layer::{uploader::UploaderBuilder, SetUploadState},
         protocol::{
-            frag_hdr::{ACK_HDR_LEN, PUSH_HDR_LEN},
+            frag::{ACK_HDR_LEN, PUSH_HDR_LEN},
             packet_hdr::PACKET_HDR_LEN,
         },
         utils::{

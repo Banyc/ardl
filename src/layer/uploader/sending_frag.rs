@@ -1,15 +1,18 @@
-use std::time::{self, Instant};
+use std::{
+    sync::Arc,
+    time::{self, Instant},
+};
 
 use crate::utils::buf::BufPasta;
 
 pub struct SendingFrag {
-    body: BufPasta,
+    body: Arc<BufPasta>,
     last_sent: time::Instant,
     is_retransmitted: bool,
 }
 
 impl SendingFrag {
-    pub fn new(body: BufPasta) -> Self {
+    pub fn new(body: Arc<BufPasta>) -> Self {
         SendingFrag {
             body,
             last_sent: Instant::now(),
@@ -17,7 +20,7 @@ impl SendingFrag {
         }
     }
 
-    pub fn body(&self) -> &BufPasta {
+    pub fn body(&self) -> &Arc<BufPasta> {
         &self.body
     }
 

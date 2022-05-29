@@ -7,7 +7,7 @@ use std::{
 
 use ardl::{
     layer::{Builder, Downloader, IObserver, OutputError, SetUploadState, Uploader},
-    protocol::{frag_hdr::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
+    protocol::{frag::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
     utils::buf::{BufSlice, BufWtr, OwnedBufWtr},
 };
 
