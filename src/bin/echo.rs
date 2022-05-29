@@ -34,7 +34,9 @@ fn main() {
     let uploading_messaging_tx = Arc::new(uploading_messaging_tx);
     let (downloading_messaging_tx, downloading_messaging_rx) = mpsc::sync_channel(0);
     let downloading_messaging_tx = Arc::new(downloading_messaging_tx);
-    let (on_send_available_tx, on_send_available_rx) = mpsc::sync_channel(0);
+    let (echoing_messaging_tx, echoing_messaging_rx) = mpsc::sync_channel(0);
+    let echoing_messaging_tx = Arc::new(echoing_messaging_tx);
+    let (on_send_available_tx, on_send_available_rx) = mpsc::sync_channel(1);
 
     // layer
     let (mut uploader, downloader) = Builder {
@@ -59,11 +61,25 @@ fn main() {
     let mut threads = Vec::new();
     {
         let uploading_messaging_tx1 = Arc::clone(&uploading_messaging_tx);
+        let echoing_messaging_tx1 = Arc::clone(&echoing_messaging_tx);
         let thread = thread::spawn(move || {
             downloading(
                 downloader,
                 downloading_messaging_rx,
                 uploading_messaging_tx1,
+                echoing_messaging_tx1,
+            )
+        });
+        threads.push(thread);
+    }
+    {
+        let uploading_messaging_tx1 = Arc::clone(&uploading_messaging_tx);
+        let downloading_messaging_tx1 = Arc::clone(&downloading_messaging_tx);
+        let thread = thread::spawn(move || {
+            echoing(
+                echoing_messaging_rx,
+                uploading_messaging_tx1,
+                downloading_messaging_tx1,
                 on_send_available_rx,
             )
         });
@@ -184,9 +200,10 @@ fn downloading(
     mut downloader: Downloader,
     messaging: mpsc::Receiver<DownloadingMessaging>,
     uploading_messaging_tx: Arc<mpsc::SyncSender<UploadingMessaging>>,
-    on_send_available_rx: mpsc::Receiver<()>,
+    echoing_messaging_tx: Arc<mpsc::SyncSender<EchoingMessaging>>,
 ) {
     let mut old_stat = None;
+    let mut is_echoing_free = true;
     loop {
         let msg = messaging.recv().unwrap();
         match msg {
@@ -200,17 +217,23 @@ fn downloading(
                     .send(UploadingMessaging::SetUploadState(set_upload_states))
                     .unwrap();
 
-                let mut buf = Vec::new();
-                while let Some(slice) = downloader.recv() {
-                    buf.extend_from_slice(slice.data());
-                }
+                // check if echoing is busy before recv
+                if is_echoing_free {
+                    let mut buf = Vec::new();
+                    while let Some(slice) = downloader.recv() {
+                        buf.extend_from_slice(slice.data());
+                    }
 
-                if !buf.is_empty() {
-                    println!("{}, {:X?}", String::from_utf8_lossy(&buf), buf);
+                    if !buf.is_empty() {
+                        println!("{}, {:X?}", String::from_utf8_lossy(&buf), buf);
 
-                    let slice = BufSlice::from_bytes(buf);
+                        let slice = BufSlice::from_bytes(buf);
 
-                    block_sending(slice, &uploading_messaging_tx, &on_send_available_rx);
+                        echoing_messaging_tx
+                            .send(EchoingMessaging::Recv(slice))
+                            .unwrap();
+                        is_echoing_free = false;
+                    }
                 }
             }
             DownloadingMessaging::PrintStat => {
@@ -225,6 +248,29 @@ fn downloading(
                     }
                 }
                 old_stat = Some(stat);
+            }
+            DownloadingMessaging::EchoingIsFree => {
+                is_echoing_free = true;
+            }
+        }
+    }
+}
+
+// basically a channel of size one
+fn echoing(
+    messaging: mpsc::Receiver<EchoingMessaging>,
+    uploading_messaging_tx: Arc<mpsc::SyncSender<UploadingMessaging>>,
+    downloading_messaging_tx: Arc<mpsc::SyncSender<DownloadingMessaging>>,
+    on_send_available_rx: mpsc::Receiver<()>,
+) {
+    loop {
+        let msg = messaging.recv().unwrap();
+        match msg {
+            EchoingMessaging::Recv(slice) => {
+                block_sending(slice, &uploading_messaging_tx, &on_send_available_rx);
+                downloading_messaging_tx
+                    .send(DownloadingMessaging::EchoingIsFree)
+                    .unwrap();
             }
         }
     }
@@ -261,6 +307,11 @@ enum UploadingMessaging {
 enum DownloadingMessaging {
     ConnRecv(OwnedBufWtr),
     PrintStat,
+    EchoingIsFree,
+}
+
+enum EchoingMessaging {
+    Recv(BufSlice),
 }
 
 enum UploadingToSendResponse {
@@ -287,9 +338,9 @@ fn block_sending(
                 some_slice = Some(slice);
             }
         }
-        // println!("got blocked");
+        // println!("[main] got blocked");
         on_send_available_rx.recv().unwrap();
-        // println!("got unblocked");
+        // println!("[main] got unblocked");
     }
 }
 
@@ -299,6 +350,12 @@ struct OnSendAvailable {
 
 impl IObserver for OnSendAvailable {
     fn notify(&self) {
-        let _ = self.tx.try_send(());
+        // println!("[uploader] notify...");
+        let _result = self.tx.try_send(());
+        // if result.is_err() {
+        //     println!("[uploader] notify err");
+        // } else {
+        //     println!("[uploader] notify ok");
+        // }
     }
 }

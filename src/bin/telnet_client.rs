@@ -36,7 +36,7 @@ fn main() {
     let uploading_messaging_tx = Arc::new(uploading_messaging_tx);
     let (downloading_messaging_tx, downloading_messaging_rx) = mpsc::sync_channel(0);
     let downloading_messaging_tx = Arc::new(downloading_messaging_tx);
-    let (on_send_available_tx, on_send_available_rx) = mpsc::sync_channel(0);
+    let (on_send_available_tx, on_send_available_rx) = mpsc::sync_channel(1);
 
     // layer
     let (mut uploader, downloader) = Builder {

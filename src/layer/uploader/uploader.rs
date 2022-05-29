@@ -138,10 +138,19 @@ impl Uploader {
     }
 
     pub fn to_send(&mut self, slice: buf::BufSlice) -> Result<(), SendError<buf::BufSlice>> {
-        match self.to_send_queue.push_back(slice) {
+        // match self.to_send_queue.is_full() {
+        //     true => println!("[uploader] before send: full"),
+        //     false => println!("[uploader] before send: not full"),
+        // }
+        let result = match self.to_send_queue.push_back(slice) {
             Ok(_) => Ok(()),
             Err(e) => Err(SendError(e.0)),
-        }
+        };
+        // match self.to_send_queue.is_full() {
+        //     true => println!("[uploader] after send: full"),
+        //     false => println!("[uploader] after send: not full"),
+        // }
+        result
     }
 
     pub fn output_packet(&mut self, wtr: &mut impl BufWtr) -> Result<(), OutputError> {
@@ -151,6 +160,14 @@ impl Uploader {
             // callback when `to_send` is not full
             if let Some(x) = &self.on_send_available {
                 let is_now_full = self.to_send_queue.is_full();
+                // match is_then_full {
+                //     true => println!("[uploader] before output: full"),
+                //     false => println!("[uploader] before output: not full"),
+                // }
+                // match is_now_full {
+                //     true => println!("[uploader] after output: full"),
+                //     false => println!("[uploader] after output: not full"),
+                // }
                 match (is_then_full, is_now_full) {
                     (true, false) => match x.upgrade() {
                         Some(x) => x.notify(),
@@ -483,10 +500,12 @@ mod tests {
         buf.append(&origin).unwrap();
         let slice = BufSlice::from_wtr(buf);
         upload.to_send(slice).map_err(|_| ()).unwrap();
+        assert!(!upload.to_send_queue.is_empty());
         let mut packet = OwnedBufWtr::new(MTU, 0);
         let result = upload.output_packet(&mut packet);
         match result.is_ok() {
             true => {
+                assert!(upload.to_send_queue.is_empty());
                 assert_eq!(
                     packet.data_len(),
                     PACKET_HDR_LEN + PUSH_HDR_LEN + origin.len()
@@ -517,6 +536,7 @@ mod tests {
         let result = upload.output_packet(&mut packet);
         match result.is_ok() {
             true => {
+                assert!(upload.to_send_queue.is_empty());
                 assert_eq!(
                     packet.data_len(),
                     PACKET_HDR_LEN + PUSH_HDR_LEN + origin1.len() + origin2.len()
