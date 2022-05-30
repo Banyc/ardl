@@ -454,7 +454,8 @@ mod tests {
     use crate::{
         layer::{uploader::UploaderBuilder, SetUploadState},
         protocol::{
-            frag::{ACK_HDR_LEN, PUSH_HDR_LEN},
+            frag::{Body, FragCommand, ACK_HDR_LEN, PUSH_HDR_LEN},
+            packet::Packet,
             packet_hdr::PACKET_HDR_LEN,
         },
         utils::{
@@ -1119,5 +1120,50 @@ mod tests {
                 8, 7 // body
             ]
         );
+    }
+
+    #[test]
+    fn test_body_pasta() {
+        let mut uploader = UploaderBuilder {
+            local_recv_buf_len: 0,
+            nack_duplicate_threshold_to_activate_fast_retransmit: 0,
+            ratio_rto_to_one_rtt: 1.5,
+            to_send_queue_len_cap: usize::MAX,
+            swnd_size_cap: usize::MAX,
+        }
+        .build();
+        uploader.disable_rto = true;
+
+        uploader
+            .to_send(BufSlice::from_bytes(vec![0, 1]))
+            .map_err(|_| ())
+            .unwrap();
+        uploader
+            .to_send(BufSlice::from_bytes(vec![2]))
+            .map_err(|_| ())
+            .unwrap();
+        uploader
+            .to_send(BufSlice::from_bytes(vec![3, 4, 5]))
+            .map_err(|_| ())
+            .unwrap();
+
+        //           0  1  2  3
+        // to_ack
+        // swnd     [    ]
+        // to_send  [[0, 1], [2], [3, 4, 5]]
+
+        let mut wtr = OwnedBufWtr::new(PACKET_HDR_LEN + PUSH_HDR_LEN + 6, 0);
+        uploader.output_packet(&mut wtr).unwrap();
+
+        let packet = Packet::from_slice(&mut BufSlice::from_wtr(wtr)).unwrap();
+        assert_eq!(packet.frags().len(), 1);
+        let body = match packet.frags()[0].cmd() {
+            FragCommand::Push { body } => match body {
+                Body::Slice(x) => x,
+                Body::Pasta(_) => panic!(),
+            },
+            FragCommand::Ack => panic!(),
+        };
+        assert_eq!(body.data(), vec![0, 1, 2, 3, 4, 5]);
     }
 }
