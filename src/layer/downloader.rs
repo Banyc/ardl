@@ -22,7 +22,10 @@ pub struct DownloaderBuilder {
 }
 
 impl DownloaderBuilder {
-    pub fn build(self) -> Downloader {
+    pub fn build(self) -> Result<Downloader, BuildError> {
+        if !(self.recv_buf_len <= u16::MAX as usize) {
+            return Err(BuildError::RecvBufTooLarge);
+        }
         let this = Downloader {
             recv_buf: RecvBuf::new(self.recv_buf_len),
             leftover: None,
@@ -37,8 +40,13 @@ impl DownloaderBuilder {
             },
         };
         this.check_rep();
-        this
+        Ok(this)
     }
+}
+
+#[derive(Debug)]
+pub enum BuildError {
+    RecvBufTooLarge,
 }
 
 #[derive(Debug)]
@@ -48,7 +56,9 @@ pub enum Error {
 
 impl Downloader {
     #[inline]
-    fn check_rep(&self) {}
+    fn check_rep(&self) {
+        assert!(self.recv_buf.rwnd_size() <= u16::MAX as usize);
+    }
 
     #[must_use]
     pub fn stat(&self) -> Stat {
@@ -234,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_empty() {
-        let mut download = DownloaderBuilder { recv_buf_len: 3 }.build();
+        let mut download = DownloaderBuilder { recv_buf_len: 3 }.build().unwrap();
 
         let origin1 = vec![];
         let slice = BufSlice::from_bytes(origin1);
@@ -244,7 +254,7 @@ mod tests {
 
     #[test]
     fn test_few_1() {
-        let mut downloader = DownloaderBuilder { recv_buf_len: 3 }.build();
+        let mut downloader = DownloaderBuilder { recv_buf_len: 3 }.build().unwrap();
 
         let packet = PacketBuilder {
             hdr: PacketHeaderBuilder {
@@ -283,7 +293,7 @@ mod tests {
 
     #[test]
     fn test_out_of_order() {
-        let mut downloader = DownloaderBuilder { recv_buf_len: 3 }.build();
+        let mut downloader = DownloaderBuilder { recv_buf_len: 3 }.build().unwrap();
 
         let packet = PacketBuilder {
             hdr: PacketHeaderBuilder {
@@ -322,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_out_of_window1() {
-        let mut downloader = DownloaderBuilder { recv_buf_len: 3 }.build();
+        let mut downloader = DownloaderBuilder { recv_buf_len: 3 }.build().unwrap();
 
         let packet = PacketBuilder {
             hdr: PacketHeaderBuilder {
@@ -358,7 +368,7 @@ mod tests {
 
     #[test]
     fn test_ack() {
-        let mut download = DownloaderBuilder { recv_buf_len: 3 }.build();
+        let mut download = DownloaderBuilder { recv_buf_len: 3 }.build().unwrap();
 
         let packet = PacketBuilder {
             hdr: PacketHeaderBuilder {
@@ -409,7 +419,7 @@ mod tests {
 
     #[test]
     fn test_rwnd_proceeding() {
-        let mut downloader = DownloaderBuilder { recv_buf_len: 2 }.build();
+        let mut downloader = DownloaderBuilder { recv_buf_len: 2 }.build().unwrap();
 
         {
             let packet = PacketBuilder {
@@ -577,7 +587,7 @@ mod tests {
 
     #[test]
     fn test_recv_max() {
-        let mut download = DownloaderBuilder { recv_buf_len: 3 }.build();
+        let mut download = DownloaderBuilder { recv_buf_len: 3 }.build().unwrap();
 
         let packet = PacketBuilder {
             hdr: PacketHeaderBuilder {
@@ -615,6 +625,16 @@ mod tests {
             assert_eq!(download.recv_max(1).unwrap().data(), vec![0]);
             assert_eq!(download.recv_max(2).unwrap().data(), vec![1, 2]);
             assert_eq!(download.recv_max(10).unwrap().data(), vec![3]);
+        }
+    }
+
+    #[test]
+    fn test_large_rwnd() {
+        let recv_buf_len = (u16::MAX as usize) + 1;
+        let result = DownloaderBuilder { recv_buf_len }.build();
+        match result {
+            Ok(_) => panic!(),
+            Err(_) => (),
         }
     }
 }

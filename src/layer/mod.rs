@@ -16,7 +16,7 @@ pub struct Builder {
 }
 
 impl Builder {
-    pub fn build(self) -> (Uploader, Downloader) {
+    pub fn build(self) -> Result<(Uploader, Downloader), BuildError> {
         let upload = UploaderBuilder {
             local_recv_buf_len: self.local_recv_buf_len,
             nack_duplicate_threshold_to_activate_fast_retransmit: self
@@ -29,9 +29,15 @@ impl Builder {
         let download = DownloaderBuilder {
             recv_buf_len: self.local_recv_buf_len,
         }
-        .build();
-        (upload, download)
+        .build()
+        .map_err(|e| BuildError::Downloader(e))?;
+        Ok((upload, download))
     }
+}
+
+#[derive(Debug)]
+pub enum BuildError {
+    Downloader(downloader::BuildError),
 }
 
 pub struct SetUploadState {
@@ -60,7 +66,8 @@ mod tests {
             to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
-        .build();
+        .build()
+        .unwrap();
         let (mut upload2, mut download2) = Builder {
             local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
@@ -68,7 +75,8 @@ mod tests {
             to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
-        .build();
+        .build()
+        .unwrap();
 
         // push: 1 -> 2
         {
@@ -121,7 +129,8 @@ mod tests {
             to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
-        .build();
+        .build()
+        .unwrap();
         let (mut upload2, mut download2) = Builder {
             local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
@@ -129,7 +138,8 @@ mod tests {
             to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
         }
-        .build();
+        .build()
+        .unwrap();
 
         // push: 1 -> 2
         {

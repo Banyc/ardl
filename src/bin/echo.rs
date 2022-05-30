@@ -47,7 +47,8 @@ fn main() {
         to_send_queue_len_cap: TO_SEND_QUEUE_LEN_CAP,
         swnd_size_cap: SWND_SIZE_CAP,
     }
-    .build();
+    .build()
+    .unwrap();
 
     // on send available
     let observer = OnSendAvailable {

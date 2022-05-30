@@ -19,8 +19,6 @@ where
 {
     fn check_rep(&self) {
         assert!(self.wnd.len() <= self.size);
-        // TODO: move this invariant outside
-        assert!(self.size <= u16::MAX as usize);
         // for (&seq, _) in &self.wnd {
         //     assert!(self.next_seq_to_receive < seq);
         //     break;

@@ -19,8 +19,6 @@ where
     fn check_rep(&self) {
         assert!(self.wnd.len() <= self.wnd_size_cap);
         assert!(self.start() <= self.end);
-        // TODO: move this invariant outside
-        assert!(self.remote_rwnd_size <= u32::MAX as usize);
         for (&seq, _) in &self.wnd {
             assert!(seq < self.end);
         }
