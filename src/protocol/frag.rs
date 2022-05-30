@@ -122,24 +122,24 @@ impl Frag {
         };
         hdr.write_u8(cmd.into()).unwrap();
         match &self.cmd {
-            FragCommand::Push { body } => match body {
-                Body::Slice(body) => {
-                    hdr.write_u32::<BigEndian>(body.len() as u32).unwrap();
-                    assert_eq!(hdr.len(), PUSH_HDR_LEN);
-                    wtr.append(&hdr)
-                        .map_err(|_| EncodingError::NotEnoughSpace)?;
-                    wtr.append(body.data())
-                        .map_err(|_| EncodingError::NotEnoughSpace)?;
+            FragCommand::Push { body } => {
+                hdr.write_u32::<BigEndian>(body.len() as u32).unwrap();
+                assert_eq!(hdr.len(), PUSH_HDR_LEN);
+                match body {
+                    Body::Slice(body) => {
+                        wtr.append(&hdr)
+                            .map_err(|_| EncodingError::NotEnoughSpace)?;
+                        wtr.append(body.data())
+                            .map_err(|_| EncodingError::NotEnoughSpace)?;
+                    }
+                    Body::Pasta(body) => {
+                        wtr.append(&hdr)
+                            .map_err(|_| EncodingError::NotEnoughSpace)?;
+                        body.append_to(wtr)
+                            .map_err(|_| EncodingError::NotEnoughSpace)?;
+                    }
                 }
-                Body::Pasta(body) => {
-                    hdr.write_u32::<BigEndian>(body.len() as u32).unwrap();
-                    assert_eq!(hdr.len(), PUSH_HDR_LEN);
-                    wtr.append(&hdr)
-                        .map_err(|_| EncodingError::NotEnoughSpace)?;
-                    body.append_to(wtr)
-                        .map_err(|_| EncodingError::NotEnoughSpace)?;
-                }
-            },
+            }
             FragCommand::Ack => {
                 assert_eq!(hdr.len(), ACK_HDR_LEN);
                 wtr.append(&hdr)
@@ -198,7 +198,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_push() {
+    fn test_push_slice() {
         let frag1 = FragBuilder {
             seq: Seq::from_u32(345),
             cmd: FragCommand::Push {
@@ -218,6 +218,47 @@ mod tests {
                     let body1 = match body1 {
                         Body::Slice(x) => x,
                         Body::Pasta(_) => panic!(),
+                    };
+                    let body2 = match body2 {
+                        Body::Slice(x) => x,
+                        Body::Pasta(_) => panic!(),
+                    };
+                    assert_eq!(body1.data(), body2.data());
+                }
+                _ => panic!(),
+            },
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_push_pasta() {
+        let mut pasta = BufPasta::new();
+        pasta.append(BufSlice::from_bytes(vec![0, 1, 2, 3, 4]));
+        pasta.append(BufSlice::from_bytes(vec![5, 6]));
+        let frag1 = FragBuilder {
+            seq: Seq::from_u32(345),
+            cmd: FragCommand::Push {
+                body: Body::Pasta(Arc::new(pasta)),
+            },
+        }
+        .build()
+        .unwrap();
+        let mut wtr = OwnedBufWtr::new(1024, 512);
+        frag1.append_to(&mut wtr).unwrap();
+        assert_eq!(frag1.len(), wtr.data_len());
+        let frag2 = Frag::from_slice(&mut BufSlice::from_wtr(wtr)).unwrap();
+        assert_eq!(frag1.seq, frag2.seq);
+        match frag1.cmd {
+            FragCommand::Push { body: body1 } => match frag2.cmd {
+                FragCommand::Push { body: body2 } => {
+                    let body1 = match body1 {
+                        Body::Slice(_) => panic!(),
+                        Body::Pasta(x) => {
+                            let mut wtr = OwnedBufWtr::new(1024, 0);
+                            x.append_to(&mut wtr).unwrap();
+                            wtr
+                        }
                     };
                     let body2 = match body2 {
                         Body::Slice(x) => x,
