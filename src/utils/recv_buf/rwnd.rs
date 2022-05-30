@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::utils::Seq;
+use crate::utils::{Seq, SlidingWndKey};
 
 use super::SeqLocationToRwnd;
 
@@ -65,7 +65,7 @@ impl<T> Rwnd<T> {
     pub fn location(&self, seq: Seq) -> SeqLocationToRwnd {
         if !(self.start <= seq) {
             SeqLocationToRwnd::TooLate
-        } else if !(seq < self.start.add_u32(self.size as u32)) {
+        } else if !(seq < self.start.add_usize(self.size)) {
             SeqLocationToRwnd::TooEarly
         } else if self.start == seq {
             SeqLocationToRwnd::AtRecvWindowStart

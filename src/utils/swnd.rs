@@ -1,6 +1,6 @@
 use std::collections::{btree_map, BTreeMap};
 
-use crate::utils::Seq;
+use crate::utils::{Seq, SlidingWndKey};
 
 pub struct Swnd<T> {
     wnd: BTreeMap<Seq, T>,
@@ -72,7 +72,7 @@ impl<T> Swnd<T> {
     /// Unit: sequence
     #[must_use]
     pub fn size(&self) -> usize {
-        self.end.sub_seq(self.start()) as usize
+        self.end.sub(&self.start()) as usize
     }
 
     pub fn push_back(&mut self, v: T) {

@@ -8,3 +8,5 @@ mod recv_buf;
 pub use recv_buf::*;
 mod swnd;
 pub use swnd::*;
+mod sliding_wnd_key;
+pub use sliding_wnd_key::*;

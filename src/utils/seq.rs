@@ -1,5 +1,7 @@
 use std::{cmp::Ordering, num::Wrapping};
 
+use crate::utils::SlidingWndKey;
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Seq {
     n: u32,
@@ -14,18 +16,8 @@ impl Seq {
         self.n
     }
 
-    pub fn add_u32(&self, n: u32) -> Seq {
-        let s = Wrapping(self.n) + Wrapping(n);
-        Seq { n: s.0 }
-    }
-
-    pub fn sub_seq(&self, other: Seq) -> u32 {
-        let s = Wrapping(self.n) - Wrapping(other.n);
-        s.0
-    }
-
     pub fn increment(&mut self) {
-        *self = self.add_u32(1);
+        *self = self.add_usize(1);
     }
 
     pub fn max(lhs: Seq, rhs: Seq) -> Seq {
@@ -34,6 +26,18 @@ impl Seq {
         } else {
             lhs
         }
+    }
+}
+
+impl SlidingWndKey for Seq {
+    fn add_usize(&self, n: usize) -> Self {
+        let s = Wrapping(self.n) + Wrapping(n as u32);
+        Seq { n: s.0 }
+    }
+
+    fn sub(&self, other: &Self) -> usize {
+        let s = Wrapping(self.n) - Wrapping(other.n);
+        s.0 as usize
     }
 }
 
@@ -68,6 +72,8 @@ impl Ord for Seq {
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::SlidingWndKey;
+
     use super::Seq;
 
     #[test]
@@ -96,14 +102,14 @@ mod tests {
     #[test]
     fn add_wraparound() {
         let a = Seq::from_u32(u32::MAX);
-        let b = a.add_u32(1);
+        let b = a.add_usize(1);
         assert_eq!(b.to_u32(), 0);
     }
 
     #[test]
     fn add_wo_wraparound() {
         let a = Seq::from_u32(0);
-        let b = a.add_u32(1);
+        let b = a.add_usize(1);
         assert_eq!(b.to_u32(), 1);
     }
 
@@ -118,20 +124,20 @@ mod tests {
     fn sub_wraparound() {
         let a = Seq::from_u32(0);
         let b = Seq::from_u32(u32::MAX);
-        assert_eq!(a.sub_seq(b), 1);
+        assert_eq!(a.sub(&b), 1);
     }
 
     #[test]
     fn sub_zero() {
         let a = Seq::from_u32(1);
         let b = Seq::from_u32(1);
-        assert_eq!(a.sub_seq(b), 0);
+        assert_eq!(a.sub(&b), 0);
     }
 
     #[test]
     fn sub_wo_wraparound() {
         let a = Seq::from_u32(3);
         let b = Seq::from_u32(1);
-        assert_eq!(a.sub_seq(b), 2);
+        assert_eq!(a.sub(&b), 2);
     }
 }

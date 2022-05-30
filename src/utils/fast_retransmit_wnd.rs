@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::utils::{dup::DuplicateThreshold, Seq};
+use crate::utils::{dup::DuplicateThreshold, Seq, SlidingWndKey};
 
 pub struct FastRetransmissionWnd {
     start: Seq,
@@ -32,7 +32,7 @@ impl FastRetransmissionWnd {
 
     pub fn retransmitted(&mut self, seq: Seq) {
         assert!(self.contains(seq));
-        self.start = seq.add_u32(1);
+        self.start = seq.add_usize(1);
         self.check_rep();
     }
 
