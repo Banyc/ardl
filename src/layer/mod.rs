@@ -1,4 +1,4 @@
-use crate::utils::Seq;
+use crate::utils::Seq32;
 
 mod downloader;
 pub use downloader::*;
@@ -36,10 +36,10 @@ impl Builder {
 
 pub struct SetUploadState {
     pub remote_rwnd_size: u16,
-    pub remote_nack: Seq,
-    pub local_next_seq_to_receive: Seq,
-    pub remote_seqs_to_ack: Vec<Seq>,
-    pub acked_local_seqs: Vec<Seq>,
+    pub remote_nack: Seq32,
+    pub local_next_seq_to_receive: Seq32,
+    pub remote_seqs_to_ack: Vec<Seq32>,
+    pub acked_local_seqs: Vec<Seq32>,
     pub local_rwnd_size: usize,
 }
 

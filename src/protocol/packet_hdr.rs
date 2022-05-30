@@ -4,7 +4,7 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
 use crate::utils::{
     buf::{BufSlice, BufWtr},
-    Seq,
+    Seq32,
 };
 
 use super::{DecodingError, EncodingError};
@@ -13,12 +13,12 @@ pub const PACKET_HDR_LEN: usize = 6;
 
 pub struct PacketHeader {
     rwnd: u16,
-    nack: Seq,
+    nack: Seq32,
 }
 
 pub struct PacketHeaderBuilder {
     pub rwnd: u16,
-    pub nack: Seq,
+    pub nack: Seq32,
 }
 
 impl PacketHeaderBuilder {
@@ -48,7 +48,7 @@ impl PacketHeader {
         let nack = rdr
             .read_u32::<BigEndian>()
             .map_err(|_e| DecodingError::Decoding { field: "nack" })?;
-        let nack = Seq::from_u32(nack);
+        let nack = Seq32::from_u32(nack);
 
         let rdr_len = rdr.position() as usize;
         slice.pop_front(rdr_len).unwrap();
@@ -78,7 +78,7 @@ impl PacketHeader {
 
     #[must_use]
     #[inline]
-    pub fn nack(&self) -> Seq {
+    pub fn nack(&self) -> Seq32 {
         self.nack
     }
 }
@@ -94,7 +94,7 @@ mod tests {
     fn test1() {
         let hdr1 = PacketHeaderBuilder {
             rwnd: 123,
-            nack: Seq::from_u32(456),
+            nack: Seq32::from_u32(456),
         }
         .build()
         .unwrap();

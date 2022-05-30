@@ -4,13 +4,19 @@ use crate::utils::Seq;
 
 use super::{rwnd::Rwnd, SeqLocationToRwnd};
 
-pub struct RecvBuf<T> {
-    rwnd: Rwnd<T>,
+pub struct RecvBuf<TSeq, T>
+where
+    TSeq: Seq,
+{
+    rwnd: Rwnd<TSeq, T>,
     sorted: VecDeque<T>,
     len: usize,
 }
 
-impl<T> RecvBuf<T> {
+impl<TSeq, T> RecvBuf<TSeq, T>
+where
+    TSeq: Seq,
+{
     fn check_rep(&self) {
         let ofo_len = self.rwnd.size();
         assert_eq!(ofo_len + self.sorted.len(), self.len);
@@ -40,7 +46,7 @@ impl<T> RecvBuf<T> {
     }
 
     #[must_use]
-    pub fn insert(&mut self, seq: Seq, v: T) -> SeqLocationToRwnd {
+    pub fn insert(&mut self, seq: TSeq, v: T) -> SeqLocationToRwnd {
         let location = self.rwnd.location(seq);
         match location {
             SeqLocationToRwnd::InRecvWindow => {
@@ -64,7 +70,7 @@ impl<T> RecvBuf<T> {
     }
 
     #[must_use]
-    pub fn next_seq_to_receive(&self) -> Seq {
+    pub fn next_seq_to_receive(&self) -> TSeq {
         self.rwnd.start()
     }
 
@@ -76,7 +82,7 @@ impl<T> RecvBuf<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{Seq, SeqLocationToRwnd};
+    use crate::utils::{Seq32, SeqLocationToRwnd};
 
     use super::RecvBuf;
 
@@ -90,14 +96,14 @@ mod tests {
 
         assert!(buf.pop_front().is_none());
 
-        let location = buf.insert(Seq::from_u32(5), 5);
+        let location = buf.insert(Seq32::from_u32(5), 5);
 
         match location {
             SeqLocationToRwnd::TooEarly => (),
             _ => panic!(),
         }
 
-        let location = buf.insert(Seq::from_u32(1), 1);
+        let location = buf.insert(Seq32::from_u32(1), 1);
 
         //         0  1  2  3  4
         // rwnd   [   1         ]
@@ -110,7 +116,7 @@ mod tests {
 
         assert!(buf.pop_front().is_none());
 
-        let location = buf.insert(Seq::from_u32(0), 0);
+        let location = buf.insert(Seq32::from_u32(0), 0);
 
         //         0  1  2  3  4
         // rwnd         [       ]
@@ -127,14 +133,14 @@ mod tests {
         // rwnd         [          ]
         // sorted    [1]
 
-        let location = buf.insert(Seq::from_u32(1), 1);
+        let location = buf.insert(Seq32::from_u32(1), 1);
 
         match location {
             SeqLocationToRwnd::TooLate => (),
             _ => panic!(),
         }
 
-        let location = buf.insert(Seq::from_u32(5), 5);
+        let location = buf.insert(Seq32::from_u32(5), 5);
 
         //         0  1  2  3  4  5
         // rwnd         [         5]

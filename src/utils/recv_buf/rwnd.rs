@@ -1,19 +1,26 @@
 use std::collections::BTreeMap;
 
-use crate::utils::{Seq, SlidingWndKey};
+use crate::utils::Seq;
 
 use super::SeqLocationToRwnd;
 
-pub struct Rwnd<T> {
-    wnd: BTreeMap<Seq, T>,
+pub struct Rwnd<TSeq, T>
+where
+    TSeq: Seq,
+{
+    wnd: BTreeMap<TSeq, T>,
     size: usize, // inclusive
-    start: Seq,
+    start: TSeq,
 }
 
-impl<T> Rwnd<T> {
+impl<TSeq, T> Rwnd<TSeq, T>
+where
+    TSeq: Seq,
+{
     fn check_rep(&self) {
         assert!(self.wnd.len() <= self.size);
-        assert!(self.size <= u32::MAX as usize);
+        // TODO: move this invariant outside
+        assert!(self.size <= u16::MAX as usize);
         // for (&seq, _) in &self.wnd {
         //     assert!(self.next_seq_to_receive < seq);
         //     break;
@@ -25,7 +32,7 @@ impl<T> Rwnd<T> {
         let this = Rwnd {
             wnd: BTreeMap::new(),
             size,
-            start: Seq::from_u32(0),
+            start: TSeq::zero(),
         };
         this.check_rep();
         this
@@ -45,13 +52,13 @@ impl<T> Rwnd<T> {
 
     #[must_use]
     #[inline]
-    pub fn start(&self) -> Seq {
+    pub fn start(&self) -> TSeq {
         self.start
     }
 
     #[must_use]
     #[inline]
-    pub fn is_acceptable(&self, seq: Seq) -> bool {
+    pub fn is_acceptable(&self, seq: TSeq) -> bool {
         match self.location(seq) {
             SeqLocationToRwnd::InRecvWindow => true,
             SeqLocationToRwnd::AtRecvWindowStart => true,
@@ -62,7 +69,7 @@ impl<T> Rwnd<T> {
 
     #[must_use]
     #[inline]
-    pub fn location(&self, seq: Seq) -> SeqLocationToRwnd {
+    pub fn location(&self, seq: TSeq) -> SeqLocationToRwnd {
         if !(self.start <= seq) {
             SeqLocationToRwnd::TooLate
         } else if !(seq < self.start.add_usize(self.size)) {
@@ -75,7 +82,7 @@ impl<T> Rwnd<T> {
     }
 
     #[inline]
-    pub fn insert(&mut self, seq: Seq, v: T) -> Option<T> {
+    pub fn insert(&mut self, seq: TSeq, v: T) -> Option<T> {
         if !self.is_acceptable(seq) {
             panic!("Sequence {:?} is out of the window", seq);
         }
@@ -86,7 +93,7 @@ impl<T> Rwnd<T> {
 
     /// Try to bypass insertion
     #[must_use]
-    pub fn insert_then_pop_next(&mut self, seq: Seq, v: T) -> Option<T> {
+    pub fn insert_then_pop_next(&mut self, seq: TSeq, v: T) -> Option<T> {
         if !self.is_acceptable(seq) {
             panic!("Sequence {:?} is out of the window", seq);
         }
@@ -116,7 +123,7 @@ impl<T> Rwnd<T> {
 
     #[inline]
     fn wnd_proceed(&mut self) {
-        self.start.increment();
+        self.start = self.start.add_usize(1);
         self.size -= 1;
         self.check_rep();
     }
@@ -124,18 +131,18 @@ impl<T> Rwnd<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{Seq, SeqLocationToRwnd};
+    use crate::utils::{Seq32, SeqLocationToRwnd};
 
     use super::Rwnd;
 
     #[test]
     fn test1() {
         let mut rwnd = Rwnd::new(4);
-        rwnd.insert(Seq::from_u32(2), 2);
+        rwnd.insert(Seq32::from_u32(2), 2);
         // _ _ 2 _
         assert_eq!(rwnd.size, 4);
 
-        rwnd.insert(Seq::from_u32(0), 0);
+        rwnd.insert(Seq32::from_u32(0), 0);
         // 0 _ 2 _
         assert_eq!(rwnd.size, 4);
 
@@ -144,16 +151,16 @@ mod tests {
         // _ 2 _
         assert_eq!(rwnd.size, 3);
 
-        let one = rwnd.insert_then_pop_next(Seq::from_u32(1), 1).unwrap();
+        let one = rwnd.insert_then_pop_next(Seq32::from_u32(1), 1).unwrap();
         assert_eq!(one, 1);
         // 2 _
         assert_eq!(rwnd.size, 2);
 
-        match rwnd.location(Seq::from_u32(2)) {
+        match rwnd.location(Seq32::from_u32(2)) {
             SeqLocationToRwnd::AtRecvWindowStart => (),
             _ => panic!(),
         }
-        match rwnd.location(Seq::from_u32(3)) {
+        match rwnd.location(Seq32::from_u32(3)) {
             SeqLocationToRwnd::InRecvWindow => (),
             _ => panic!(),
         }
@@ -163,16 +170,16 @@ mod tests {
         // _
         assert_eq!(rwnd.size, 1);
 
-        let three = rwnd.insert_then_pop_next(Seq::from_u32(3), 3).unwrap();
+        let three = rwnd.insert_then_pop_next(Seq32::from_u32(3), 3).unwrap();
         assert_eq!(three, 3);
         // <empty>
         assert_eq!(rwnd.size, 0);
 
-        match rwnd.location(Seq::from_u32(3)) {
+        match rwnd.location(Seq32::from_u32(3)) {
             SeqLocationToRwnd::TooLate => (),
             _ => panic!(),
         }
-        match rwnd.location(Seq::from_u32(4)) {
+        match rwnd.location(Seq32::from_u32(4)) {
             SeqLocationToRwnd::TooEarly => (),
             _ => panic!(),
         }

@@ -1,24 +1,30 @@
 use std::ops::Range;
 
-use crate::utils::{dup::DuplicateThreshold, Seq, SlidingWndKey};
+use crate::utils::{dup::DuplicateThreshold, Seq};
 
-pub struct FastRetransmissionWnd {
-    start: Seq,
-    end: Seq, // exclusive
-    duplicate_threshold: DuplicateThreshold<Seq>,
+pub struct FastRetransmissionWnd<TSeq>
+where
+    TSeq: Seq,
+{
+    start: TSeq,
+    end: TSeq, // exclusive
+    duplicate_threshold: DuplicateThreshold<TSeq>,
 }
 
-impl FastRetransmissionWnd {
+impl<TSeq> FastRetransmissionWnd<TSeq>
+where
+    TSeq: Seq,
+{
     fn check_rep(&self) {
         assert!(self.start <= self.end);
     }
 
     pub fn new(nack_duplicate_limit_to_activate: usize) -> Self {
         let this = FastRetransmissionWnd {
-            start: Seq::from_u32(0),
-            end: Seq::from_u32(0),
+            start: Seq::zero(),
+            end: Seq::zero(),
             duplicate_threshold: DuplicateThreshold::new(
-                Seq::from_u32(0),
+                Seq::zero(),
                 nack_duplicate_limit_to_activate,
             ),
         };
@@ -26,17 +32,17 @@ impl FastRetransmissionWnd {
         this
     }
 
-    pub fn contains(&self, seq: Seq) -> bool {
+    pub fn contains(&self, seq: TSeq) -> bool {
         self.duplicate_threshold.is_activated() && self.start <= seq && seq < self.end
     }
 
-    pub fn retransmitted(&mut self, seq: Seq) {
+    pub fn retransmitted(&mut self, seq: TSeq) {
         assert!(self.contains(seq));
         self.start = seq.add_usize(1);
         self.check_rep();
     }
 
-    pub fn try_set_boundaries(&mut self, range: Range<Seq>) {
+    pub fn try_set_boundaries(&mut self, range: Range<TSeq>) {
         assert!(range.start <= range.end);
         self.duplicate_threshold.set(range.start);
         if self.duplicate_threshold.is_activated() {

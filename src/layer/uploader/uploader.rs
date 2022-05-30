@@ -12,7 +12,7 @@ use crate::{
     },
     utils::{
         buf::{self, BufPasta, BufSlicerQue, BufWtr},
-        FastRetransmissionWnd, Seq, Swnd,
+        FastRetransmissionWnd, Seq32, Swnd,
     },
 };
 
@@ -32,13 +32,13 @@ static MIN_RTO: time::Duration = Duration::from_millis(MIN_RTO_MS);
 pub struct Uploader {
     // modified by `append_frags_to`
     to_send_queue: buf::BufSlicerQue,
-    swnd: Swnd<SendingPush>,
-    to_ack_queue: VecDeque<Seq>,
+    swnd: Swnd<Seq32, SendingPush>,
+    to_ack_queue: VecDeque<Seq32>,
 
     // modified by setters
     local_rwnd_size: usize,
-    local_next_seq_to_receive: Seq,
-    fast_retransmission_wnd: FastRetransmissionWnd,
+    local_next_seq_to_receive: Seq32,
+    fast_retransmission_wnd: FastRetransmissionWnd<Seq32>,
 
     // stat
     stat: LocalStat,
@@ -69,7 +69,7 @@ impl UploaderBuilder {
             swnd: Swnd::new(self.swnd_size_cap),
             to_ack_queue: VecDeque::new(),
             local_rwnd_size: self.local_recv_buf_len,
-            local_next_seq_to_receive: Seq::from_u32(0),
+            local_next_seq_to_receive: Seq32::from_u32(0),
             stat: LocalStat {
                 srtt: None,
                 retransmissions: 0,
@@ -349,19 +349,19 @@ impl Uploader {
     }
 
     #[inline]
-    fn set_local_next_seq_to_receive(&mut self, local_next_seq_to_receive: Seq) {
+    fn set_local_next_seq_to_receive(&mut self, local_next_seq_to_receive: Seq32) {
         self.local_next_seq_to_receive = local_next_seq_to_receive;
         self.check_rep();
     }
 
     #[inline]
-    fn add_remote_seq_to_ack(&mut self, remote_seq_to_ack: Seq) {
+    fn add_remote_seq_to_ack(&mut self, remote_seq_to_ack: Seq32) {
         self.to_ack_queue.push_back(remote_seq_to_ack);
         self.check_rep();
     }
 
     #[inline]
-    fn set_acked_local_seq(&mut self, acked_local_seq: Seq) {
+    fn set_acked_local_seq(&mut self, acked_local_seq: Seq32) {
         // remove the selected sequence
         if let Some(frag) = self.swnd.remove(&acked_local_seq) {
             if !frag.is_retransmitted() {
@@ -381,7 +381,7 @@ impl Uploader {
     }
 
     #[inline]
-    fn remove_sending_before(&mut self, remote_nack: Seq) {
+    fn remove_sending_before(&mut self, remote_nack: Seq32) {
         self.swnd.remove_before(remote_nack);
         self.check_rep();
     }
@@ -406,7 +406,7 @@ impl Uploader {
         for acked_local_seq in delta.acked_local_seqs {
             self.set_acked_local_seq(acked_local_seq);
             max_acked_local_seq = Some(match max_acked_local_seq {
-                Some(x) => Seq::max(x, acked_local_seq),
+                Some(x) => Seq32::max(x, acked_local_seq),
                 None => acked_local_seq,
             });
         }
@@ -443,7 +443,7 @@ pub struct Stat {
     pub fast_retransmissions: u64,
     pub pushes: u64,
     pub acks: u64,
-    pub next_seq_to_send: Seq,
+    pub next_seq_to_send: Seq32,
 }
 
 #[cfg(test)]
@@ -459,7 +459,7 @@ mod tests {
         },
         utils::{
             buf::{BufSlice, BufWtr, OwnedBufWtr},
-            Seq,
+            Seq32,
         },
     };
 
@@ -709,7 +709,7 @@ mod tests {
         assert_eq!(upload.swnd.end().to_u32(), 1);
         assert_eq!(upload.swnd.size(), 1);
 
-        upload.set_acked_local_seq(Seq::from_u32(0));
+        upload.set_acked_local_seq(Seq32::from_u32(0));
 
         assert_eq!(upload.swnd.size(), 0);
     }
@@ -796,10 +796,10 @@ mod tests {
 
         let state = SetUploadState {
             remote_rwnd_size: 99,
-            remote_nack: Seq::from_u32(0),
-            local_next_seq_to_receive: Seq::from_u32(0),
+            remote_nack: Seq32::from_u32(0),
+            local_next_seq_to_receive: Seq32::from_u32(0),
             remote_seqs_to_ack: vec![],
-            acked_local_seqs: vec![Seq::from_u32(1)],
+            acked_local_seqs: vec![Seq32::from_u32(1)],
             local_rwnd_size: 1,
         };
         upload.set_state(state).unwrap();
@@ -844,10 +844,10 @@ mod tests {
 
         let state = SetUploadState {
             remote_rwnd_size: 99,
-            remote_nack: Seq::from_u32(1),
-            local_next_seq_to_receive: Seq::from_u32(0),
+            remote_nack: Seq32::from_u32(1),
+            local_next_seq_to_receive: Seq32::from_u32(0),
             remote_seqs_to_ack: vec![],
-            acked_local_seqs: vec![Seq::from_u32(0)],
+            acked_local_seqs: vec![Seq32::from_u32(0)],
             local_rwnd_size: 1,
         };
         upload.set_state(state).unwrap();
@@ -907,10 +907,10 @@ mod tests {
 
         let state = SetUploadState {
             remote_rwnd_size: 99,
-            remote_nack: Seq::from_u32(1),
-            local_next_seq_to_receive: Seq::from_u32(0),
+            remote_nack: Seq32::from_u32(1),
+            local_next_seq_to_receive: Seq32::from_u32(0),
             remote_seqs_to_ack: vec![],
-            acked_local_seqs: vec![Seq::from_u32(2)],
+            acked_local_seqs: vec![Seq32::from_u32(2)],
             local_rwnd_size: 1,
         };
         upload.set_state(state).unwrap();
@@ -974,10 +974,10 @@ mod tests {
 
         let state = SetUploadState {
             remote_rwnd_size: 99,
-            remote_nack: Seq::from_u32(1),
-            local_next_seq_to_receive: Seq::from_u32(0),
+            remote_nack: Seq32::from_u32(1),
+            local_next_seq_to_receive: Seq32::from_u32(0),
             remote_seqs_to_ack: vec![],
-            acked_local_seqs: vec![Seq::from_u32(2)],
+            acked_local_seqs: vec![Seq32::from_u32(2)],
             local_rwnd_size: 1,
         };
         upload.set_state(state).unwrap();
@@ -999,10 +999,10 @@ mod tests {
 
         let state = SetUploadState {
             remote_rwnd_size: 99,
-            remote_nack: Seq::from_u32(1),
-            local_next_seq_to_receive: Seq::from_u32(0),
+            remote_nack: Seq32::from_u32(1),
+            local_next_seq_to_receive: Seq32::from_u32(0),
             remote_seqs_to_ack: vec![],
-            acked_local_seqs: vec![Seq::from_u32(2)],
+            acked_local_seqs: vec![Seq32::from_u32(2)],
             local_rwnd_size: 1,
         };
         upload.set_state(state).unwrap();
@@ -1047,9 +1047,9 @@ mod tests {
         uploader
             .set_state(SetUploadState {
                 remote_rwnd_size: 99,
-                remote_nack: Seq::from_u32(2),
-                local_next_seq_to_receive: Seq::from_u32(88),
-                remote_seqs_to_ack: vec![Seq::from_u32(0), Seq::from_u32(1)],
+                remote_nack: Seq32::from_u32(2),
+                local_next_seq_to_receive: Seq32::from_u32(88),
+                remote_seqs_to_ack: vec![Seq32::from_u32(0), Seq32::from_u32(1)],
                 acked_local_seqs: Vec::new(),
                 local_rwnd_size: 99,
             })

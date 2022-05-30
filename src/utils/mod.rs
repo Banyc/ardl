@@ -1,12 +1,12 @@
 pub mod buf;
 pub mod dup;
-mod seq;
-pub use seq::*;
+mod seq32;
+pub use seq32::*;
 mod fast_retransmit_wnd;
 pub use fast_retransmit_wnd::*;
 mod recv_buf;
 pub use recv_buf::*;
 mod swnd;
 pub use swnd::*;
-mod sliding_wnd_key;
-pub use sliding_wnd_key::*;
+mod seq;
+pub use seq::*;

@@ -5,7 +5,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use crate::utils::{
     buf::{BufPasta, BufSlice, BufWtr},
-    Seq,
+    Seq32,
 };
 
 use super::{DecodingError, EncodingError};
@@ -14,12 +14,12 @@ pub const PUSH_HDR_LEN: usize = 9;
 pub const ACK_HDR_LEN: usize = 5;
 
 pub struct Frag {
-    seq: Seq,
+    seq: Seq32,
     cmd: FragCommand,
 }
 
 pub struct FragBuilder {
-    pub seq: Seq,
+    pub seq: Seq32,
     pub cmd: FragCommand,
 }
 
@@ -77,7 +77,7 @@ impl Frag {
         let seq = rdr
             .read_u32::<BigEndian>()
             .map_err(|_e| DecodingError::Decoding { field: "seq" })?;
-        let seq = Seq::from_u32(seq);
+        let seq = Seq32::from_u32(seq);
         let cmd = rdr
             .read_u8()
             .map_err(|_e| DecodingError::Decoding { field: "cmd" })?;
@@ -165,7 +165,7 @@ impl Frag {
 
     #[must_use]
     #[inline]
-    pub fn seq(&self) -> Seq {
+    pub fn seq(&self) -> Seq32 {
         self.seq
     }
 
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn test_push_slice() {
         let frag1 = FragBuilder {
-            seq: Seq::from_u32(345),
+            seq: Seq32::from_u32(345),
             cmd: FragCommand::Push {
                 body: Body::Slice(BufSlice::from_bytes(vec![0, 1, 2, 3, 4])),
             },
@@ -237,7 +237,7 @@ mod tests {
         pasta.append(BufSlice::from_bytes(vec![0, 1, 2, 3, 4]));
         pasta.append(BufSlice::from_bytes(vec![5, 6]));
         let frag1 = FragBuilder {
-            seq: Seq::from_u32(345),
+            seq: Seq32::from_u32(345),
             cmd: FragCommand::Push {
                 body: Body::Pasta(Arc::new(pasta)),
             },
@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn test_ack() {
         let frag1 = FragBuilder {
-            seq: Seq::from_u32(345),
+            seq: Seq32::from_u32(345),
             cmd: FragCommand::Ack,
         }
         .build()

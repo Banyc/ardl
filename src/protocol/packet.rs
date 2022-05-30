@@ -79,7 +79,7 @@ mod tests {
         },
         utils::{
             buf::{BufSlice, OwnedBufWtr},
-            Seq,
+            Seq32,
         },
     };
 
@@ -90,19 +90,19 @@ mod tests {
         let packet1 = PacketBuilder {
             hdr: PacketHeaderBuilder {
                 rwnd: 123,
-                nack: Seq::from_u32(456),
+                nack: Seq32::from_u32(456),
             }
             .build()
             .unwrap(),
             frags: vec![
                 FragBuilder {
-                    seq: Seq::from_u32(345),
+                    seq: Seq32::from_u32(345),
                     cmd: FragCommand::Ack,
                 }
                 .build()
                 .unwrap(),
                 FragBuilder {
-                    seq: Seq::from_u32(345),
+                    seq: Seq32::from_u32(345),
                     cmd: FragCommand::Push {
                         body: Body::Slice(BufSlice::from_bytes(vec![0, 1, 2, 3, 4])),
                     },

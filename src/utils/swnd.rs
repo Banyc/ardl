@@ -1,18 +1,25 @@
 use std::collections::{btree_map, BTreeMap};
 
-use crate::utils::{Seq, SlidingWndKey};
+use crate::utils::Seq;
 
-pub struct Swnd<T> {
-    wnd: BTreeMap<Seq, T>,
+pub struct Swnd<TSeq, T>
+where
+    TSeq: Seq,
+{
+    wnd: BTreeMap<TSeq, T>,
     remote_rwnd_size: usize,
-    end: Seq, // exclusive
+    end: TSeq, // exclusive
     wnd_size_cap: usize,
 }
 
-impl<T> Swnd<T> {
+impl<TSeq, T> Swnd<TSeq, T>
+where
+    TSeq: Seq,
+{
     fn check_rep(&self) {
         assert!(self.wnd.len() <= self.wnd_size_cap);
         assert!(self.start() <= self.end);
+        // TODO: move this invariant outside
         assert!(self.remote_rwnd_size <= u32::MAX as usize);
         for (&seq, _) in &self.wnd {
             assert!(seq < self.end);
@@ -24,7 +31,7 @@ impl<T> Swnd<T> {
         let this = Swnd {
             wnd: BTreeMap::new(),
             remote_rwnd_size: 0,
-            end: Seq::from_u32(0),
+            end: TSeq::zero(),
             wnd_size_cap,
         };
         this.check_rep();
@@ -41,12 +48,12 @@ impl<T> Swnd<T> {
     }
 
     #[must_use]
-    pub fn end(&self) -> Seq {
+    pub fn end(&self) -> TSeq {
         self.end
     }
 
     #[must_use]
-    pub fn iter_mut(&mut self) -> btree_map::IterMut<'_, Seq, T> {
+    pub fn iter_mut(&mut self) -> btree_map::IterMut<'_, TSeq, T> {
         self.wnd.iter_mut()
     }
 
@@ -57,7 +64,7 @@ impl<T> Swnd<T> {
     }
 
     #[must_use]
-    fn start(&self) -> Seq {
+    fn start(&self) -> TSeq {
         let mut first = None;
         for (&seq, _) in &self.wnd {
             first = Some(seq);
@@ -80,18 +87,18 @@ impl<T> Swnd<T> {
         // println!("swnd: push_back: start: {:?}", self.start());
         // println!("swnd: push_back: end: {:?}", self.end);
         self.wnd.insert(self.end, v);
-        self.end.increment();
+        self.end = self.end.add_usize(1);
         self.check_rep();
     }
 
-    pub fn remove(&mut self, ack: &Seq) -> Option<T> {
+    pub fn remove(&mut self, ack: &TSeq) -> Option<T> {
         // println!("swnd: remove: {:?}", ack);
         let ret = self.wnd.remove(ack);
         self.check_rep();
         ret
     }
 
-    pub fn remove_before(&mut self, nack: Seq) {
+    pub fn remove_before(&mut self, nack: TSeq) {
         let mut to_removes = Vec::new();
         for (&seq, _) in &self.wnd {
             if seq < nack {
@@ -112,17 +119,17 @@ impl<T> Swnd<T> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::utils::Seq;
+    use crate::utils::Seq32;
 
     use super::Swnd;
 
     #[test]
     fn btree_map_iter() {
         let mut map = BTreeMap::new();
-        map.insert(Seq::from_u32(2), 2);
-        map.insert(Seq::from_u32(1), 1);
-        map.insert(Seq::from_u32(3), 3);
-        map.insert(Seq::from_u32(0), 0);
+        map.insert(Seq32::from_u32(2), 2);
+        map.insert(Seq32::from_u32(1), 1);
+        map.insert(Seq32::from_u32(3), 3);
+        map.insert(Seq32::from_u32(0), 0);
 
         let mut i = 0;
         for (&k, &v) in &map {
@@ -148,7 +155,7 @@ mod tests {
 
     #[test]
     fn test1() {
-        let mut wnd = Swnd::new(3);
+        let mut wnd = Swnd::<Seq32, i32>::new(3);
         assert_eq!(wnd.start().to_u32(), 0);
         assert_eq!(wnd.size(), 0);
         assert_eq!(wnd.end().to_u32(), 0);
@@ -183,7 +190,7 @@ mod tests {
         assert_eq!(wnd.size(), 1);
         assert_eq!(wnd.end().to_u32(), 1);
 
-        wnd.remove(&Seq::from_u32(0));
+        wnd.remove(&Seq32::from_u32(0));
 
         // max(rwnd, 1):    [    ]
         // cap:             [       ]

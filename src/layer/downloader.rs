@@ -5,14 +5,14 @@ use crate::{
     },
     utils::{
         buf::{self, BufSlice},
-        RecvBuf, Seq, SeqLocationToRwnd,
+        RecvBuf, Seq32, SeqLocationToRwnd,
     },
 };
 
 use super::SetUploadState;
 
 pub struct Downloader {
-    recv_buf: RecvBuf<BufSlice>,
+    recv_buf: RecvBuf<Seq32, BufSlice>,
     leftover: Option<BufSlice>,
     stat: LocalStat,
 }
@@ -184,14 +184,14 @@ impl Downloader {
 }
 
 struct FragsState {
-    remote_seqs_to_ack: Vec<Seq>,
-    acked_local_seqs: Vec<Seq>,
+    remote_seqs_to_ack: Vec<Seq32>,
+    acked_local_seqs: Vec<Seq32>,
 }
 
 struct PacketState {
     frags: FragsState,
     remote_rwnd: u16,
-    remote_nack: Seq,
+    remote_nack: Seq32,
 }
 
 struct LocalStat {
@@ -210,7 +210,7 @@ pub struct Stat {
     pub early_pushes: u64,
     pub out_of_orders: u64,
     pub decoding_errors: u64,
-    pub next_seq_to_receive: Seq,
+    pub next_seq_to_receive: Seq32,
     pub packets: u64,
     pub acks: u64,
     pub pushes: u64,
@@ -226,7 +226,7 @@ mod tests {
         },
         utils::{
             buf::{BufSlice, OwnedBufWtr},
-            Seq,
+            Seq32,
         },
     };
 
@@ -249,12 +249,12 @@ mod tests {
         let packet = PacketBuilder {
             hdr: PacketHeaderBuilder {
                 rwnd: 2,
-                nack: Seq::from_u32(0),
+                nack: Seq32::from_u32(0),
             }
             .build()
             .unwrap(),
             frags: vec![FragBuilder {
-                seq: Seq::from_u32(0),
+                seq: Seq32::from_u32(0),
                 cmd: FragCommand::Push {
                     body: Body::Slice(BufSlice::from_bytes(vec![4; 11])),
                 },
@@ -275,7 +275,7 @@ mod tests {
         assert_eq!(state.local_rwnd_size, 2);
         assert_eq!(state.remote_nack.to_u32(), 0);
         assert_eq!(state.remote_rwnd_size, 2);
-        let tmp: Vec<Seq> = vec![0].iter().map(|&x| Seq::from_u32(x)).collect();
+        let tmp: Vec<Seq32> = vec![0].iter().map(|&x| Seq32::from_u32(x)).collect();
         assert_eq!(state.remote_seqs_to_ack, tmp);
         assert_eq!(state.acked_local_seqs, vec![]);
         assert_eq!(downloader.recv().unwrap().data(), vec![4; 11]);
@@ -288,12 +288,12 @@ mod tests {
         let packet = PacketBuilder {
             hdr: PacketHeaderBuilder {
                 rwnd: 2,
-                nack: Seq::from_u32(0),
+                nack: Seq32::from_u32(0),
             }
             .build()
             .unwrap(),
             frags: vec![FragBuilder {
-                seq: Seq::from_u32(1),
+                seq: Seq32::from_u32(1),
                 cmd: FragCommand::Push {
                     body: Body::Slice(BufSlice::from_bytes(vec![4; 11])),
                 },
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(state.local_rwnd_size, 3);
         assert_eq!(state.remote_nack.to_u32(), 0);
         assert_eq!(state.remote_rwnd_size, 2);
-        let tmp: Vec<Seq> = vec![1].iter().map(|&x| Seq::from_u32(x)).collect();
+        let tmp: Vec<Seq32> = vec![1].iter().map(|&x| Seq32::from_u32(x)).collect();
         assert_eq!(state.remote_seqs_to_ack, tmp);
         assert_eq!(state.acked_local_seqs, vec![]);
         assert!(downloader.recv().is_none());
@@ -327,12 +327,12 @@ mod tests {
         let packet = PacketBuilder {
             hdr: PacketHeaderBuilder {
                 rwnd: 2,
-                nack: Seq::from_u32(0),
+                nack: Seq32::from_u32(0),
             }
             .build()
             .unwrap(),
             frags: vec![FragBuilder {
-                seq: Seq::from_u32(99),
+                seq: Seq32::from_u32(99),
                 cmd: FragCommand::Push {
                     body: Body::Slice(BufSlice::from_bytes(vec![4; 11])),
                 },
@@ -363,25 +363,25 @@ mod tests {
         let packet = PacketBuilder {
             hdr: PacketHeaderBuilder {
                 rwnd: 2,
-                nack: Seq::from_u32(0),
+                nack: Seq32::from_u32(0),
             }
             .build()
             .unwrap(),
             frags: vec![
                 FragBuilder {
-                    seq: Seq::from_u32(1),
+                    seq: Seq32::from_u32(1),
                     cmd: FragCommand::Ack,
                 }
                 .build()
                 .unwrap(),
                 FragBuilder {
-                    seq: Seq::from_u32(3),
+                    seq: Seq32::from_u32(3),
                     cmd: FragCommand::Ack,
                 }
                 .build()
                 .unwrap(),
                 FragBuilder {
-                    seq: Seq::from_u32(99),
+                    seq: Seq32::from_u32(99),
                     cmd: FragCommand::Push {
                         body: Body::Slice(BufSlice::from_bytes(vec![4; 11])),
                     },
@@ -402,7 +402,7 @@ mod tests {
         assert_eq!(state.remote_nack.to_u32(), 0);
         assert_eq!(state.remote_rwnd_size, 2);
         assert_eq!(state.remote_seqs_to_ack, vec![]);
-        let tmp: Vec<Seq> = vec![1, 3].iter().map(|&x| Seq::from_u32(x)).collect();
+        let tmp: Vec<Seq32> = vec![1, 3].iter().map(|&x| Seq32::from_u32(x)).collect();
         assert_eq!(state.acked_local_seqs, tmp);
         assert!(download.recv().is_none());
     }
@@ -415,13 +415,13 @@ mod tests {
             let packet = PacketBuilder {
                 hdr: PacketHeaderBuilder {
                     rwnd: 2,
-                    nack: Seq::from_u32(0),
+                    nack: Seq32::from_u32(0),
                 }
                 .build()
                 .unwrap(),
                 frags: vec![
                     FragBuilder {
-                        seq: Seq::from_u32(1),
+                        seq: Seq32::from_u32(1),
                         cmd: FragCommand::Push {
                             body: Body::Slice(BufSlice::from_bytes(vec![1; 1])),
                         },
@@ -429,7 +429,7 @@ mod tests {
                     .build()
                     .unwrap(),
                     FragBuilder {
-                        seq: Seq::from_u32(2),
+                        seq: Seq32::from_u32(2),
                         cmd: FragCommand::Push {
                             body: Body::Slice(BufSlice::from_bytes(vec![2; 2])),
                         },
@@ -451,7 +451,7 @@ mod tests {
             assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd_size, 2);
-            let tmp: Vec<Seq> = vec![1].iter().map(|&x| Seq::from_u32(x)).collect();
+            let tmp: Vec<Seq32> = vec![1].iter().map(|&x| Seq32::from_u32(x)).collect();
             assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
             assert!(downloader.recv().is_none());
@@ -460,13 +460,13 @@ mod tests {
             let packet = PacketBuilder {
                 hdr: PacketHeaderBuilder {
                     rwnd: 2,
-                    nack: Seq::from_u32(0),
+                    nack: Seq32::from_u32(0),
                 }
                 .build()
                 .unwrap(),
                 frags: vec![
                     FragBuilder {
-                        seq: Seq::from_u32(0),
+                        seq: Seq32::from_u32(0),
                         cmd: FragCommand::Push {
                             body: Body::Slice(BufSlice::from_bytes(vec![0; 1])),
                         },
@@ -474,7 +474,7 @@ mod tests {
                     .build()
                     .unwrap(),
                     FragBuilder {
-                        seq: Seq::from_u32(3),
+                        seq: Seq32::from_u32(3),
                         cmd: FragCommand::Push {
                             body: Body::Slice(BufSlice::from_bytes(vec![3; 3])),
                         },
@@ -496,7 +496,7 @@ mod tests {
             assert_eq!(state.local_rwnd_size, 0);
             assert_eq!(state.remote_nack.to_u32(), 0);
             assert_eq!(state.remote_rwnd_size, 2);
-            let tmp: Vec<Seq> = vec![0].iter().map(|&x| Seq::from_u32(x)).collect();
+            let tmp: Vec<Seq32> = vec![0].iter().map(|&x| Seq32::from_u32(x)).collect();
             assert_eq!(state.remote_seqs_to_ack, tmp);
             assert_eq!(state.acked_local_seqs, vec![]);
             assert_eq!(downloader.recv().unwrap().data(), vec![0; 1]);
@@ -506,12 +506,12 @@ mod tests {
             let packet = PacketBuilder {
                 hdr: PacketHeaderBuilder {
                     rwnd: 2,
-                    nack: Seq::from_u32(0),
+                    nack: Seq32::from_u32(0),
                 }
                 .build()
                 .unwrap(),
                 frags: vec![FragBuilder {
-                    seq: Seq::from_u32(2),
+                    seq: Seq32::from_u32(2),
                     cmd: FragCommand::Push {
                         body: Body::Slice(BufSlice::from_bytes(vec![2; 2])),
                     },
@@ -532,7 +532,7 @@ mod tests {
             assert_eq!(changes.local_rwnd_size, 1);
             assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd_size, 2);
-            let tmp: Vec<Seq> = vec![2].iter().map(|&x| Seq::from_u32(x)).collect();
+            let tmp: Vec<Seq32> = vec![2].iter().map(|&x| Seq32::from_u32(x)).collect();
             assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
             assert_eq!(downloader.recv().unwrap().data(), vec![2; 2]);
@@ -543,12 +543,12 @@ mod tests {
             let packet = PacketBuilder {
                 hdr: PacketHeaderBuilder {
                     rwnd: 2,
-                    nack: Seq::from_u32(0),
+                    nack: Seq32::from_u32(0),
                 }
                 .build()
                 .unwrap(),
                 frags: vec![FragBuilder {
-                    seq: Seq::from_u32(0),
+                    seq: Seq32::from_u32(0),
                     cmd: FragCommand::Push {
                         body: Body::Slice(BufSlice::from_bytes(vec![2; 2])),
                     },
@@ -569,7 +569,7 @@ mod tests {
             assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd_size, 2);
-            assert_eq!(changes.remote_seqs_to_ack, vec![Seq::from_u32(0)]);
+            assert_eq!(changes.remote_seqs_to_ack, vec![Seq32::from_u32(0)]);
             assert_eq!(changes.acked_local_seqs, vec![]);
             assert!(downloader.recv().is_none());
         }
@@ -582,12 +582,12 @@ mod tests {
         let packet = PacketBuilder {
             hdr: PacketHeaderBuilder {
                 rwnd: 2,
-                nack: Seq::from_u32(0),
+                nack: Seq32::from_u32(0),
             }
             .build()
             .unwrap(),
             frags: vec![FragBuilder {
-                seq: Seq::from_u32(0),
+                seq: Seq32::from_u32(0),
                 cmd: FragCommand::Push {
                     body: Body::Slice(BufSlice::from_bytes(vec![0, 1, 2, 3])),
                 },
@@ -609,7 +609,7 @@ mod tests {
             assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd_size, 2);
-            let tmp: Vec<Seq> = vec![0].iter().map(|&x| Seq::from_u32(x)).collect();
+            let tmp: Vec<Seq32> = vec![0].iter().map(|&x| Seq32::from_u32(x)).collect();
             assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
             assert_eq!(download.recv_max(1).unwrap().data(), vec![0]);
