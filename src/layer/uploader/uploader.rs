@@ -1147,9 +1147,6 @@ mod tests {
             .map_err(|_| ())
             .unwrap();
 
-        //           0  1  2  3
-        // to_ack
-        // swnd     [    ]
         // to_send  [[0, 1], [2], [3, 4, 5]]
 
         let mut wtr = OwnedBufWtr::new(PACKET_HDR_LEN + PUSH_HDR_LEN + 6, 0);
