@@ -117,7 +117,9 @@ pub struct SendError<T>(pub T);
 
 impl Uploader {
     #[inline]
-    fn check_rep(&self) {}
+    fn check_rep(&self) {
+        assert!(self.local_rwnd_size <= u16::MAX as usize);
+    }
 
     #[must_use]
     pub fn stat(&self) -> Stat {
@@ -389,6 +391,7 @@ impl Uploader {
     #[inline]
     fn set_local_rwnd_size(&mut self, local_rwnd_size: usize) {
         self.local_rwnd_size = local_rwnd_size;
+        self.check_rep();
     }
 
     #[inline]
@@ -422,6 +425,7 @@ impl Uploader {
         for remote_seq_to_ack in delta.remote_seqs_to_ack {
             self.add_remote_seq_to_ack(remote_seq_to_ack);
         }
+        self.check_rep();
         Ok(())
     }
 }
