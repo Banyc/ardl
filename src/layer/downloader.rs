@@ -100,18 +100,20 @@ impl Downloader {
     pub fn input_packet(&mut self, mut slice: buf::BufSlice) -> Result<SetUploadState, Error> {
         let packet = Packet::from_slice(&mut slice).map_err(|_| {
             self.stat.decoding_errors += 1;
+            self.check_rep();
             Error::Decoding
         })?;
-        let partial_state_changes = self.handle_packet(packet);
-        let state_changes = SetUploadState {
-            remote_rwnd_size: partial_state_changes.remote_rwnd,
-            remote_nack: partial_state_changes.remote_nack,
+        let packet_state = self.handle_packet(packet);
+        let state = SetUploadState {
+            remote_rwnd_size: packet_state.remote_rwnd,
+            remote_nack: packet_state.remote_nack,
             local_next_seq_to_receive: self.recv_buf.next_seq_to_receive(),
-            remote_seqs_to_ack: partial_state_changes.frags.remote_seqs_to_ack,
-            acked_local_seqs: partial_state_changes.frags.acked_local_seqs,
+            remote_seqs_to_ack: packet_state.frags.remote_seqs_to_ack,
+            acked_local_seqs: packet_state.frags.acked_local_seqs,
             local_rwnd_size: self.recv_buf.rwnd_size(),
         };
-        Ok(state_changes)
+        self.check_rep();
+        Ok(state)
     }
 
     #[must_use]
@@ -124,6 +126,7 @@ impl Downloader {
             remote_nack: packet.hdr.nack(),
         };
         self.stat.packets += 1;
+        self.check_rep();
         state
     }
 
@@ -172,7 +175,7 @@ impl Downloader {
                 }
             }
         }
-
+        self.check_rep();
         FragsState {
             remote_seqs_to_ack,
             acked_local_seqs,

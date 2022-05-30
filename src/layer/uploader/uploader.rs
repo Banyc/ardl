@@ -288,8 +288,7 @@ impl Uploader {
 
         // move data from to_send queue to sending queue and output those data
         {
-            // get as many bytes from to_send_queue
-            // call those bytes "frag"
+            // get as many bytes from to_send_queue to body
             let frag_body_limit = space - PUSH_HDR_LEN;
             assert!(frag_body_limit != 0);
             let mut body = BufPasta::new();
@@ -306,7 +305,7 @@ impl Uploader {
 
             let push = SendingPush::new(Arc::new(body));
 
-            // write the frag to output buffer
+            // write the frag, including its hdr and body, to output buffer
             let frag = FragBuilder {
                 seq: self.swnd.end(),
                 cmd: FragCommand::Push {
@@ -318,7 +317,7 @@ impl Uploader {
             assert!(frag.len() <= space);
             frags.push(frag);
 
-            // register the frag to swnd
+            // register the body to swnd
             self.swnd.push_back(push);
 
             self.stat.pushes += 1;
