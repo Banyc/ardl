@@ -18,7 +18,7 @@ use crate::{
 
 use super::{
     super::{IObserver, SetUploadState},
-    SendingFrag,
+    SendingPush,
 };
 
 const ALPHA: f64 = 1.0 / 8.0;
@@ -32,7 +32,7 @@ static MIN_RTO: time::Duration = Duration::from_millis(MIN_RTO_MS);
 pub struct Uploader {
     // modified by `append_frags_to`
     to_send_queue: buf::BufSlicerQue,
-    swnd: Swnd<SendingFrag>,
+    swnd: Swnd<SendingPush>,
     to_ack_queue: VecDeque<Seq>,
 
     // modified by setters
@@ -304,7 +304,7 @@ impl Uploader {
             assert!(body.len() <= frag_body_limit);
             assert!(body.len() > 0);
 
-            let push = SendingFrag::new(Arc::new(body));
+            let push = SendingPush::new(Arc::new(body));
 
             // write the frag to output buffer
             let frag = FragBuilder {

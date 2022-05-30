@@ -109,7 +109,7 @@ fn main() {
         let uploading_messaging_tx1 = Arc::clone(&uploading_messaging_tx);
         let downloading_messaging_tx1 = Arc::clone(&downloading_messaging_tx);
         let thread = thread::spawn(move || {
-            socket_recving(
+            socket_receiving(
                 connection1,
                 uploading_messaging_tx1,
                 downloading_messaging_tx1,
@@ -282,7 +282,7 @@ fn echoing(
     }
 }
 
-fn socket_recving(
+fn socket_receiving(
     listener: Arc<UdpSocket>,
     uploading_messaging: Arc<mpsc::SyncSender<UploadingMessaging>>,
     downloading_messaging: Arc<mpsc::SyncSender<DownloadingMessaging>>,

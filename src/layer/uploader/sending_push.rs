@@ -5,15 +5,15 @@ use std::{
 
 use crate::utils::buf::BufPasta;
 
-pub struct SendingFrag {
+pub struct SendingPush {
     body: Arc<BufPasta>,
     last_sent: time::Instant,
     is_retransmitted: bool,
 }
 
-impl SendingFrag {
+impl SendingPush {
     pub fn new(body: Arc<BufPasta>) -> Self {
-        SendingFrag {
+        SendingPush {
             body,
             last_sent: Instant::now(),
             is_retransmitted: false,
