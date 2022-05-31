@@ -6,6 +6,7 @@
 
 - Echo server - `src/bin/echo.rs`
 - Interactive client - `src/bin/telnet_client.rs`
+- File sender - `src/bin/file_client.rs`
 
 ## Jargons
 
