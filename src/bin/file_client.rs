@@ -149,7 +149,7 @@ fn main() {
     }
     let send_duration = Instant::now().duration_since(before_send);
     println!(
-        "main: done reading file. Speed: {:.2} MiB/s",
+        "main: done reading file. Speed: {:.2} mB/s",
         source_size as f64 / send_duration.as_secs_f64() / 1000.0 / 1000.0
     );
     on_destination_available_rx.recv().unwrap();
@@ -330,7 +330,7 @@ fn processing(
                     last_bytes_written_so_far = bytes_written_so_far;
 
                     println!(
-                        "Progress: {:.2}%. Speed: {:.2} KiB/s",
+                        "Progress: {:.2}%. Speed: {:.2} kB/s",
                         bytes_written_so_far as f64 / source_size as f64 * 100.0,
                         speed / 1000.0,
                     );
