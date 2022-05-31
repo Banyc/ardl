@@ -10,17 +10,17 @@ use ardl::{
     utils::buf::{BufSlice, BufWtr, OwnedBufWtr},
 };
 
-const MTU: usize = 512;
-const FLUSH_INTERVAL_MS: u64 = 10;
+const MTU: usize = 1300;
+const FLUSH_INTERVAL_MS: u64 = 1;
 const STAT_INTERVAL_S: u64 = 1;
 const LISTEN_ADDR: &str = "0.0.0.0:19479";
-const LOCAL_RECV_BUF_LEN: usize = u16::MAX as usize;
-const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 0;
+const LOCAL_RECV_BUF_LEN: usize = 1024;
+const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 2;
 const RATIO_RTO_TO_ONE_RTT: f64 = 1.5;
 // const TO_SEND_QUEUE_LEN_CAP: usize = 1024 * 64;
-const TO_SEND_QUEUE_LEN_CAP: usize = 1;
-const SWND_SIZE_CAP: usize = usize::MAX;
-const ENABLE_PRINTING_DATA: bool = true;
+const TO_SEND_QUEUE_LEN_CAP: usize = 1024;
+const SWND_SIZE_CAP: usize = 1024;
+const ENABLE_PRINTING_DATA: bool = false;
 
 fn main() {
     // socket
@@ -167,15 +167,17 @@ fn uploading(
                     continue;
                 }
 
-                let mut wtr = OwnedBufWtr::new(MTU, 0);
-                match uploader.output_packet(&mut wtr) {
-                    Ok(_) => {
-                        listener.send_to(wtr.data(), remote_addr_.unwrap()).unwrap();
+                loop {
+                    let mut wtr = OwnedBufWtr::new(MTU, 0);
+                    match uploader.output_packet(&mut wtr) {
+                        Ok(_) => {
+                            listener.send_to(wtr.data(), remote_addr_.unwrap()).unwrap();
+                        }
+                        Err(e) => match e {
+                            OutputError::NothingToOutput => break,
+                            OutputError::BufferTooSmall => panic!(),
+                        },
                     }
-                    Err(e) => match e {
-                        OutputError::NothingToOutput => (),
-                        OutputError::BufferTooSmall => panic!(),
-                    },
                 }
             }
             UploadingMessaging::ToSend(slice, responser) => match uploader.to_send(slice) {

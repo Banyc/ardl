@@ -6,26 +6,24 @@ use std::{
     str::FromStr,
     sync::{mpsc, Arc},
     thread,
-    time::{self, Duration, SystemTime},
+    time::{self, Duration, Instant, SystemTime},
 };
 
 use ardl::{
     layer::{Builder, Downloader, IObserver, OutputError, SetUploadState, Uploader},
-    protocol::{frag::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
     utils::buf::{BufSlice, BufWtr, OwnedBufWtr},
 };
 
-// const MTU: usize = 512;
-const MTU: usize = PACKET_HDR_LEN + PUSH_HDR_LEN + 1;
-const FLUSH_INTERVAL_MS: u64 = 10;
+const MTU: usize = 1300;
+const FLUSH_INTERVAL_MS: u64 = 1;
 const STAT_INTERVAL_S: u64 = 1;
 const LISTEN_ADDR: &str = "0.0.0.0:19479";
-const LOCAL_RECV_BUF_LEN: usize = 2;
-const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 0;
+const LOCAL_RECV_BUF_LEN: usize = 1024;
+const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 2;
 const RATIO_RTO_TO_ONE_RTT: f64 = 1.5;
 // const TO_SEND_QUEUE_LEN_CAP: usize = 1024 * 64;
-const TO_SEND_QUEUE_LEN_CAP: usize = 1;
-const MAX_SWND_SIZE: usize = usize::MAX;
+const TO_SEND_QUEUE_LEN_CAP: usize = 1024;
+const MAX_SWND_SIZE: usize = 1024;
 const SOURCE_FILE_NAME: &str = "test.upload.txt";
 const DESTINATION_FILE_NAME: &str = "test.download.txt";
 
@@ -136,8 +134,9 @@ fn main() {
     }
 
     // send source
+    let before_send = Instant::now();
     loop {
-        let mut wtr = OwnedBufWtr::new(1024, 0);
+        let mut wtr = OwnedBufWtr::new(1024 * 64, 0);
         let len = source.read(wtr.back_free_space()).unwrap();
         if len == 0 {
             break;
@@ -148,6 +147,11 @@ fn main() {
 
         block_sending(slice, &uploading_messaging_tx, &on_send_available_rx);
     }
+    let send_duration = Instant::now().duration_since(before_send);
+    println!(
+        "main: done reading file. Speed: {:.2} MiB/s",
+        source_size as f64 / send_duration.as_secs_f64() / 1000.0 / 1000.0
+    );
     on_destination_available_rx.recv().unwrap();
     println!("main: done receiving file");
 
@@ -192,19 +196,22 @@ fn uploading(
     loop {
         let msg = messaging.recv().unwrap();
         match msg {
-            UploadingMessaging::SetUploadStates(x) => {
+            UploadingMessaging::SetUploadState(x) => {
                 uploader.set_state(x).unwrap();
             }
             UploadingMessaging::Flush => {
-                let mut wtr = OwnedBufWtr::new(MTU, 0);
-                match uploader.output_packet(&mut wtr) {
-                    Ok(_) => {
-                        connection.send(wtr.data()).unwrap();
+                //
+                loop {
+                    let mut wtr = OwnedBufWtr::new(MTU, 0);
+                    match uploader.output_packet(&mut wtr) {
+                        Ok(_) => {
+                            connection.send(wtr.data()).unwrap();
+                        }
+                        Err(e) => match e {
+                            OutputError::NothingToOutput => break,
+                            OutputError::BufferTooSmall => panic!(),
+                        },
                     }
-                    Err(e) => match e {
-                        OutputError::NothingToOutput => (),
-                        OutputError::BufferTooSmall => panic!(),
-                    },
                 }
             }
             UploadingMessaging::ToSend(slice, responser) => match uploader.to_send(slice) {
@@ -241,7 +248,7 @@ fn downloading(
         match msg {
             DownloadingMessaging::ConnRecv(wtr) => {
                 let rdr = BufSlice::from_wtr(wtr);
-                let set_upload_states = match downloader.input_packet(rdr) {
+                let set_upload_state = match downloader.input_packet(rdr) {
                     Ok(x) => x,
                     Err(e) => {
                         println!("err: download.input ({:?})", e);
@@ -250,7 +257,7 @@ fn downloading(
                     }
                 };
                 uploading_messaging_tx
-                    .send(UploadingMessaging::SetUploadStates(set_upload_states))
+                    .send(UploadingMessaging::SetUploadState(set_upload_state))
                     .unwrap();
                 if is_processing_free {
                     if let Some(slice) = downloader.recv() {
@@ -297,6 +304,13 @@ fn processing(
 ) {
     let mut destination = Some(destination);
     let mut bytes_written_so_far = 0;
+    let mut last_print = Instant::now();
+    let print_duration = Duration::from_secs(1);
+    let mut speed = 0.0;
+    let mut last_recv = Instant::now();
+    let mut last_bytes_written_so_far = 0;
+    // let alpha = 1.0 / 8.0;
+    let alpha = 1.0 / 1.0;
     loop {
         downloading_messaging_tx
             .send(DownloadingMessaging::ProcessingIsFree)
@@ -304,20 +318,24 @@ fn processing(
         let msg = messaging.recv().unwrap();
         match msg {
             ProcessingMessaging::Recv(slice) => {
-                // println!(
-                //     "{}, {:X?}",
-                //     String::from_utf8_lossy(&slice.data()),
-                //     slice.data()
-                // );
-
                 let mut file = destination.take().unwrap();
                 file.write(slice.data()).unwrap();
                 bytes_written_so_far += slice.data().len();
 
-                println!(
-                    "Progress: {:.2}%",
-                    bytes_written_so_far as f64 / source_size as f64 * 100.0
-                );
+                if Instant::now().duration_since(last_print) > print_duration {
+                    let this_speed = (bytes_written_so_far - last_bytes_written_so_far) as f64
+                        / Instant::now().duration_since(last_recv).as_secs_f64();
+                    speed = (1.0 - alpha) * speed + alpha * this_speed;
+                    last_recv = Instant::now();
+                    last_bytes_written_so_far = bytes_written_so_far;
+
+                    println!(
+                        "Progress: {:.2}%. Speed: {:.2} KiB/s",
+                        bytes_written_so_far as f64 / source_size as f64 * 100.0,
+                        speed / 1000.0,
+                    );
+                    last_print = Instant::now();
+                }
 
                 if bytes_written_so_far == source_size {
                     drop(file);
@@ -348,7 +366,7 @@ fn socket_receiving(
 }
 
 enum UploadingMessaging {
-    SetUploadStates(SetUploadState),
+    SetUploadState(SetUploadState),
     Flush,
     ToSend(BufSlice, mpsc::SyncSender<UploadingToSendResponse>),
     PrintStat,
