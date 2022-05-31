@@ -7,21 +7,20 @@ use std::{
 
 use ardl::{
     layer::{Builder, Downloader, IObserver, OutputError, SetUploadState, Uploader},
-    protocol::{frag::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
     utils::buf::{BufSlice, BufWtr, OwnedBufWtr},
 };
 
-// const MTU: usize = 512;
-const MTU: usize = PACKET_HDR_LEN + PUSH_HDR_LEN + 1;
+const MTU: usize = 512;
 const FLUSH_INTERVAL_MS: u64 = 10;
 const STAT_INTERVAL_S: u64 = 1;
 const LISTEN_ADDR: &str = "0.0.0.0:19479";
-const LOCAL_RECV_BUF_LEN: usize = 2;
+const LOCAL_RECV_BUF_LEN: usize = u16::MAX as usize;
 const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 0;
 const RATIO_RTO_TO_ONE_RTT: f64 = 1.5;
 // const TO_SEND_QUEUE_LEN_CAP: usize = 1024 * 64;
 const TO_SEND_QUEUE_LEN_CAP: usize = 1;
 const SWND_SIZE_CAP: usize = usize::MAX;
+const ENABLE_PRINTING_DATA: bool = true;
 
 fn main() {
     // socket
@@ -210,32 +209,25 @@ fn downloading(
     processing_messaging_tx: Arc<mpsc::SyncSender<ProcessingMessaging>>,
 ) {
     let mut old_stat = None;
-    let mut is_processing_free = true;
+    let mut is_processing_free = false;
     loop {
         let msg = messaging.recv().unwrap();
         match msg {
             DownloadingMessaging::ConnRecv(wtr) => {
                 let rdr = BufSlice::from_wtr(wtr);
-                let set_upload_states = match downloader.input_packet(rdr) {
+                let set_upload_state = match downloader.input_packet(rdr) {
                     Ok(x) => x,
-                    Err(_) => todo!(),
+                    Err(e) => {
+                        println!("err: download.input ({:?})", e);
+                        continue;
+                        // todo!()
+                    }
                 };
                 uploading_messaging_tx
-                    .send(UploadingMessaging::SetUploadState(set_upload_states))
+                    .send(UploadingMessaging::SetUploadState(set_upload_state))
                     .unwrap();
-
-                // check if processing is busy before recv
                 if is_processing_free {
-                    let mut buf = Vec::new();
-                    while let Some(slice) = downloader.recv() {
-                        buf.extend_from_slice(slice.data());
-                    }
-
-                    if !buf.is_empty() {
-                        println!("{}, {:X?}", String::from_utf8_lossy(&buf), buf);
-
-                        let slice = BufSlice::from_bytes(buf);
-
+                    if let Some(slice) = downloader.recv() {
                         processing_messaging_tx
                             .send(ProcessingMessaging::Recv(slice))
                             .unwrap();
@@ -258,6 +250,12 @@ fn downloading(
             }
             DownloadingMessaging::ProcessingIsFree => {
                 is_processing_free = true;
+                if let Some(slice) = downloader.recv() {
+                    processing_messaging_tx
+                        .send(ProcessingMessaging::Recv(slice))
+                        .unwrap();
+                    is_processing_free = false;
+                }
             }
         }
     }
@@ -271,13 +269,21 @@ fn processing(
     on_send_available_rx: mpsc::Receiver<()>,
 ) {
     loop {
+        downloading_messaging_tx
+            .send(DownloadingMessaging::ProcessingIsFree)
+            .unwrap();
         let msg = messaging.recv().unwrap();
         match msg {
             ProcessingMessaging::Recv(slice) => {
+                if ENABLE_PRINTING_DATA {
+                    println!(
+                        "{}, {:X?}",
+                        String::from_utf8_lossy(&slice.data()),
+                        slice.data()
+                    );
+                }
+
                 block_sending(slice, &uploading_messaging_tx, &on_send_available_rx);
-                downloading_messaging_tx
-                    .send(DownloadingMessaging::ProcessingIsFree)
-                    .unwrap();
             }
         }
     }
@@ -357,12 +363,6 @@ struct OnSendAvailable {
 
 impl IObserver for OnSendAvailable {
     fn notify(&self) {
-        // println!("[uploader] notify...");
         let _result = self.tx.try_send(());
-        // if result.is_err() {
-        //     println!("[uploader] notify err");
-        // } else {
-        //     println!("[uploader] notify ok");
-        // }
     }
 }
