@@ -1,5 +1,9 @@
 use std::{
-    net::{SocketAddr, UdpSocket},
+    fs::{self, File},
+    io::{self, Read, Write},
+    net::UdpSocket,
+    path::PathBuf,
+    str::FromStr,
     sync::{mpsc, Arc},
     thread,
     time::{self, Duration, SystemTime},
@@ -21,13 +25,30 @@ const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 0;
 const RATIO_RTO_TO_ONE_RTT: f64 = 1.5;
 // const TO_SEND_QUEUE_LEN_CAP: usize = 1024 * 64;
 const TO_SEND_QUEUE_LEN_CAP: usize = 1;
-const SWND_SIZE_CAP: usize = usize::MAX;
+const MAX_SWND_SIZE: usize = usize::MAX;
+const SOURCE_FILE_NAME: &str = "test.upload.txt";
+const DESTINATION_FILE_NAME: &str = "test.download.txt";
 
 fn main() {
+    // file
+    let source = PathBuf::from_str(SOURCE_FILE_NAME).unwrap();
+    let destination = PathBuf::from_str(DESTINATION_FILE_NAME).unwrap();
+    let mut source = File::open(source).unwrap();
+    let source_size = source.metadata().unwrap().len() as usize;
+    match fs::remove_file(&destination) {
+        Ok(_) => (),
+        Err(e) => match e.kind() {
+            io::ErrorKind::NotFound => (),
+            _ => panic!(),
+        },
+    }
+    let destination = File::create(destination).unwrap();
+
     // socket
-    let listener = UdpSocket::bind(LISTEN_ADDR).unwrap();
-    println!("listening on {}", listener.local_addr().unwrap());
-    let listener = Arc::new(listener);
+    let connection = UdpSocket::bind("0.0.0.0:0").unwrap();
+    connection.connect(LISTEN_ADDR).unwrap();
+    println!("Binding to {}", connection.local_addr().unwrap());
+    let connection = Arc::new(connection);
 
     // channels
     let (uploading_messaging_tx, uploading_messaging_rx) = mpsc::sync_channel(0);
@@ -37,6 +58,7 @@ fn main() {
     let (processing_messaging_tx, processing_messaging_rx) = mpsc::sync_channel(0);
     let processing_messaging_tx = Arc::new(processing_messaging_tx);
     let (on_send_available_tx, on_send_available_rx) = mpsc::sync_channel(1);
+    let (on_destination_available_tx, on_destination_available_rx) = mpsc::sync_channel(1);
 
     // layer
     let (mut uploader, downloader) = Builder {
@@ -45,7 +67,7 @@ fn main() {
             NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
         ratio_rto_to_one_rtt: RATIO_RTO_TO_ONE_RTT,
         to_send_queue_len_cap: TO_SEND_QUEUE_LEN_CAP,
-        swnd_size_cap: SWND_SIZE_CAP,
+        swnd_size_cap: MAX_SWND_SIZE,
     }
     .build()
     .unwrap();
@@ -74,20 +96,20 @@ fn main() {
         threads.push(thread);
     }
     {
-        let uploading_messaging_tx1 = Arc::clone(&uploading_messaging_tx);
         let downloading_messaging_tx1 = Arc::clone(&downloading_messaging_tx);
         let thread = thread::spawn(move || {
             processing(
                 processing_messaging_rx,
-                uploading_messaging_tx1,
                 downloading_messaging_tx1,
-                on_send_available_rx,
+                destination,
+                source_size,
+                on_destination_available_tx,
             )
         });
         threads.push(thread);
     }
     {
-        let connection1 = Arc::clone(&listener);
+        let connection1 = Arc::clone(&connection);
         let thread = thread::spawn(move || {
             uploading(connection1, uploader, uploading_messaging_rx);
         });
@@ -106,23 +128,34 @@ fn main() {
         threads.push(thread);
     }
     {
-        let connection1 = Arc::clone(&listener);
-        let uploading_messaging_tx1 = Arc::clone(&uploading_messaging_tx);
+        let connection1 = Arc::clone(&connection);
         let downloading_messaging_tx1 = Arc::clone(&downloading_messaging_tx);
-        let thread = thread::spawn(move || {
-            socket_receiving(
-                connection1,
-                uploading_messaging_tx1,
-                downloading_messaging_tx1,
-            )
-        });
+        let thread =
+            thread::spawn(move || socket_receiving(connection1, downloading_messaging_tx1));
         threads.push(thread);
     }
 
-    // thread sleeps forever
-    for thread in threads {
-        thread.join().unwrap();
+    // send source
+    loop {
+        let mut wtr = OwnedBufWtr::new(1024, 0);
+        let len = source.read(wtr.back_free_space()).unwrap();
+        if len == 0 {
+            break;
+        }
+        wtr.grow_back(len).unwrap();
+
+        let slice = BufSlice::from_wtr(wtr);
+
+        block_sending(slice, &uploading_messaging_tx, &on_send_available_rx);
     }
+    on_destination_available_rx.recv().unwrap();
+    println!("main: done receiving file");
+
+    // flush all acks
+    thread::sleep(Duration::from_secs(1));
+
+    // verify integrity
+    // TODO
 }
 
 fn flush_timer(uploading_messaging_tx: Arc<mpsc::SyncSender<UploadingMessaging>>) {
@@ -151,27 +184,22 @@ fn stat_timer(
 }
 
 fn uploading(
-    listener: Arc<UdpSocket>,
+    connection: Arc<UdpSocket>,
     mut uploader: Uploader,
     messaging: mpsc::Receiver<UploadingMessaging>,
 ) {
     let mut old_stat = None;
-    let mut remote_addr_ = None;
     loop {
         let msg = messaging.recv().unwrap();
         match msg {
-            UploadingMessaging::SetUploadState(state) => {
-                uploader.set_state(state).unwrap();
+            UploadingMessaging::SetUploadStates(x) => {
+                uploader.set_state(x).unwrap();
             }
             UploadingMessaging::Flush => {
-                if let None = remote_addr_ {
-                    continue;
-                }
-
                 let mut wtr = OwnedBufWtr::new(MTU, 0);
                 match uploader.output_packet(&mut wtr) {
                     Ok(_) => {
-                        listener.send_to(wtr.data(), remote_addr_.unwrap()).unwrap();
+                        connection.send(wtr.data()).unwrap();
                     }
                     Err(e) => match e {
                         OutputError::NothingToOutput => (),
@@ -196,9 +224,6 @@ fn uploading(
                 }
                 old_stat = Some(stat);
             }
-            UploadingMessaging::SetRemoteAddr(remote_addr) => {
-                remote_addr_ = Some(remote_addr);
-            }
         }
     }
 }
@@ -218,21 +243,27 @@ fn downloading(
                 let rdr = BufSlice::from_wtr(wtr);
                 let set_upload_states = match downloader.input_packet(rdr) {
                     Ok(x) => x,
-                    Err(_) => todo!(),
+                    Err(e) => {
+                        println!("err: download.input ({:?})", e);
+                        continue;
+                        // todo!()
+                    }
                 };
                 uploading_messaging_tx
-                    .send(UploadingMessaging::SetUploadState(set_upload_states))
+                    .send(UploadingMessaging::SetUploadStates(set_upload_states))
                     .unwrap();
 
                 // check if processing is busy before recv
                 if is_processing_free {
                     let mut buf = Vec::new();
                     while let Some(slice) = downloader.recv() {
+                        assert!(slice.data().len() > 0);
+
                         buf.extend_from_slice(slice.data());
                     }
 
                     if !buf.is_empty() {
-                        println!("{}, {:X?}", String::from_utf8_lossy(&buf), buf);
+                        // println!("{}, {:X?}", String::from_utf8_lossy(&buf), buf);
 
                         let slice = BufSlice::from_bytes(buf);
 
@@ -266,37 +297,53 @@ fn downloading(
 // basically a channel of size one
 fn processing(
     messaging: mpsc::Receiver<ProcessingMessaging>,
-    uploading_messaging_tx: Arc<mpsc::SyncSender<UploadingMessaging>>,
     downloading_messaging_tx: Arc<mpsc::SyncSender<DownloadingMessaging>>,
-    on_send_available_rx: mpsc::Receiver<()>,
+    destination: fs::File,
+    source_size: usize,
+    on_destination_available_tx: mpsc::SyncSender<()>,
 ) {
+    let mut destination = Some(destination);
+    let mut bytes_written_so_far = 0;
     loop {
         let msg = messaging.recv().unwrap();
         match msg {
             ProcessingMessaging::Recv(slice) => {
-                block_sending(slice, &uploading_messaging_tx, &on_send_available_rx);
+                let mut file = destination.take().unwrap();
+                file.write(slice.data()).unwrap();
+                bytes_written_so_far += slice.data().len();
+
+                if bytes_written_so_far == source_size {
+                    drop(file);
+                    on_destination_available_tx.send(()).unwrap();
+                    return;
+                } else {
+                    destination = Some(file);
+                }
+                assert!(bytes_written_so_far < source_size);
+
                 downloading_messaging_tx
                     .send(DownloadingMessaging::ProcessingIsFree)
                     .unwrap();
+
+                println!(
+                    "Progress: {:.2}%",
+                    bytes_written_so_far as f64 / source_size as f64 * 100.0
+                );
             }
         }
     }
 }
 
 fn socket_receiving(
-    listener: Arc<UdpSocket>,
-    uploading_messaging: Arc<mpsc::SyncSender<UploadingMessaging>>,
+    connection: Arc<UdpSocket>,
     downloading_messaging: Arc<mpsc::SyncSender<DownloadingMessaging>>,
 ) {
     loop {
         let mut buf = vec![0; MTU];
-        let (len, remote_addr) = listener.recv_from(&mut buf).unwrap();
+        let len = connection.recv(&mut buf).unwrap();
 
         let wtr = OwnedBufWtr::from_bytes(buf, 0, len);
 
-        uploading_messaging
-            .send(UploadingMessaging::SetRemoteAddr(remote_addr))
-            .unwrap();
         downloading_messaging
             .send(DownloadingMessaging::ConnRecv(wtr))
             .unwrap();
@@ -304,11 +351,10 @@ fn socket_receiving(
 }
 
 enum UploadingMessaging {
-    SetUploadState(SetUploadState),
+    SetUploadStates(SetUploadState),
     Flush,
     ToSend(BufSlice, mpsc::SyncSender<UploadingToSendResponse>),
     PrintStat,
-    SetRemoteAddr(SocketAddr),
 }
 
 enum DownloadingMessaging {
@@ -345,9 +391,9 @@ fn block_sending(
                 some_slice = Some(slice);
             }
         }
-        // println!("[main] got blocked");
+        // println!("got blocked");
         on_send_available_rx.recv().unwrap();
-        // println!("[main] got unblocked");
+        // println!("got unblocked");
     }
 }
 
@@ -357,12 +403,6 @@ struct OnSendAvailable {
 
 impl IObserver for OnSendAvailable {
     fn notify(&self) {
-        // println!("[uploader] notify...");
-        let _result = self.tx.try_send(());
-        // if result.is_err() {
-        //     println!("[uploader] notify err");
-        // } else {
-        //     println!("[uploader] notify ok");
-        // }
+        let _ = self.tx.try_send(());
     }
 }
