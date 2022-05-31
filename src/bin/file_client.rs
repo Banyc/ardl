@@ -19,13 +19,13 @@ const FLUSH_INTERVAL_MS: u64 = 1;
 const STAT_INTERVAL_S: u64 = 1;
 const LISTEN_ADDR: &str = "0.0.0.0:19479";
 const LOCAL_RECV_BUF_LEN: usize = 1024;
-const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 2;
 const RATIO_RTO_TO_ONE_RTT: f64 = 1.5;
 // const TO_SEND_QUEUE_LEN_CAP: usize = 1024 * 64;
 const TO_SEND_QUEUE_LEN_CAP: usize = 1024;
-const MAX_SWND_SIZE: usize = 1024;
-const SOURCE_FILE_NAME: &str = "test.upload.txt";
-const DESTINATION_FILE_NAME: &str = "test.download.txt";
+const SWND_SIZE_CAP: usize = 1024;
+const SOURCE_FILE_NAME: &str = "Free_Test_Data_10MB_MP4.upload.mp4";
+const DESTINATION_FILE_NAME: &str = "Free_Test_Data_10MB_MP4.download.mp4";
+static NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = SWND_SIZE_CAP * 1 / 16;
 
 fn main() {
     // file
@@ -65,7 +65,7 @@ fn main() {
             NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT,
         ratio_rto_to_one_rtt: RATIO_RTO_TO_ONE_RTT,
         to_send_queue_len_cap: TO_SEND_QUEUE_LEN_CAP,
-        swnd_size_cap: MAX_SWND_SIZE,
+        swnd_size_cap: SWND_SIZE_CAP,
     }
     .build()
     .unwrap();

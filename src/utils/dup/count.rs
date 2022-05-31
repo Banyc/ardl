@@ -24,6 +24,10 @@ where
         self.value = v;
     }
 
+    pub fn recount(&mut self) {
+        self.count = 0;
+    }
+
     pub fn count(&self) -> usize {
         self.count
     }

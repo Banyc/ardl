@@ -15,12 +15,12 @@ const FLUSH_INTERVAL_MS: u64 = 1;
 const STAT_INTERVAL_S: u64 = 1;
 const LISTEN_ADDR: &str = "0.0.0.0:19479";
 const LOCAL_RECV_BUF_LEN: usize = 1024;
-const NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = 2;
 const RATIO_RTO_TO_ONE_RTT: f64 = 1.5;
 // const TO_SEND_QUEUE_LEN_CAP: usize = 1024 * 64;
 const TO_SEND_QUEUE_LEN_CAP: usize = 1024;
 const SWND_SIZE_CAP: usize = 1024;
 const ENABLE_PRINTING_DATA: bool = false;
+static NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = SWND_SIZE_CAP * 1 / 16;
 
 fn main() {
     // socket

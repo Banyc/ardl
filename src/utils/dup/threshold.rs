@@ -23,6 +23,10 @@ where
         self.dup_threshold_to_activate <= self.duplicate.count()
     }
 
+    pub fn recount(&mut self) {
+        self.duplicate.recount();
+    }
+
     pub fn set(&mut self, v: T) {
         self.duplicate.set(v);
     }

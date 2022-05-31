@@ -33,7 +33,7 @@ where
     }
 
     pub fn contains(&self, seq: TSeq) -> bool {
-        self.duplicate_threshold.is_activated() && self.start <= seq && seq < self.end
+        self.start <= seq && seq < self.end
     }
 
     pub fn retransmitted(&mut self, seq: TSeq) {
@@ -48,6 +48,7 @@ where
         if self.duplicate_threshold.is_activated() {
             self.start = range.start;
             self.end = range.end;
+            self.duplicate_threshold.recount();
         }
         self.check_rep();
     }
