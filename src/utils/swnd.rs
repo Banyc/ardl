@@ -36,6 +36,10 @@ where
         this
     }
 
+    pub fn value_mut(&mut self, seq: &TSeq) -> Option<&mut T> {
+        self.wnd.get_mut(&seq)
+    }
+
     pub fn set_remote_rwnd_size(&mut self, n: usize) {
         self.remote_rwnd_size = n;
     }

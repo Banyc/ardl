@@ -33,6 +33,10 @@ impl SendingPush {
         *timeout <= self.last_sent.elapsed()
     }
 
+    pub fn last_sent(&self) -> Instant {
+        self.last_sent
+    }
+
     pub fn is_retransmitted(&self) -> bool {
         self.is_retransmitted
     }
