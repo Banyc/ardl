@@ -235,7 +235,7 @@ fn downloading(
     processing_messaging_tx: Arc<mpsc::SyncSender<ProcessingMessaging>>,
 ) {
     let mut old_stat = None;
-    let mut is_processing_free = true;
+    let mut is_processing_free = false;
     loop {
         let msg = messaging.recv().unwrap();
         match msg {
@@ -252,21 +252,8 @@ fn downloading(
                 uploading_messaging_tx
                     .send(UploadingMessaging::SetUploadStates(set_upload_states))
                     .unwrap();
-
-                // check if processing is busy before recv
                 if is_processing_free {
-                    let mut buf = Vec::new();
-                    while let Some(slice) = downloader.recv() {
-                        assert!(slice.data().len() > 0);
-
-                        buf.extend_from_slice(slice.data());
-                    }
-
-                    if !buf.is_empty() {
-                        // println!("{}, {:X?}", String::from_utf8_lossy(&buf), buf);
-
-                        let slice = BufSlice::from_bytes(buf);
-
+                    if let Some(slice) = downloader.recv() {
                         processing_messaging_tx
                             .send(ProcessingMessaging::Recv(slice))
                             .unwrap();
@@ -289,6 +276,12 @@ fn downloading(
             }
             DownloadingMessaging::ProcessingIsFree => {
                 is_processing_free = true;
+                if let Some(slice) = downloader.recv() {
+                    processing_messaging_tx
+                        .send(ProcessingMessaging::Recv(slice))
+                        .unwrap();
+                    is_processing_free = false;
+                }
             }
         }
     }
@@ -305,30 +298,34 @@ fn processing(
     let mut destination = Some(destination);
     let mut bytes_written_so_far = 0;
     loop {
+        downloading_messaging_tx
+            .send(DownloadingMessaging::ProcessingIsFree)
+            .unwrap();
         let msg = messaging.recv().unwrap();
         match msg {
             ProcessingMessaging::Recv(slice) => {
+                // println!(
+                //     "{}, {:X?}",
+                //     String::from_utf8_lossy(&slice.data()),
+                //     slice.data()
+                // );
+
                 let mut file = destination.take().unwrap();
                 file.write(slice.data()).unwrap();
                 bytes_written_so_far += slice.data().len();
-
-                if bytes_written_so_far == source_size {
-                    drop(file);
-                    on_destination_available_tx.send(()).unwrap();
-                    return;
-                } else {
-                    destination = Some(file);
-                }
-                assert!(bytes_written_so_far < source_size);
-
-                downloading_messaging_tx
-                    .send(DownloadingMessaging::ProcessingIsFree)
-                    .unwrap();
 
                 println!(
                     "Progress: {:.2}%",
                     bytes_written_so_far as f64 / source_size as f64 * 100.0
                 );
+
+                if bytes_written_so_far == source_size {
+                    drop(file);
+                    on_destination_available_tx.send(()).unwrap();
+                    continue;
+                }
+                destination = Some(file);
+                assert!(bytes_written_so_far < source_size);
             }
         }
     }
