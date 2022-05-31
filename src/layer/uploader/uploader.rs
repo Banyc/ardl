@@ -245,11 +245,7 @@ impl Uploader {
             }
             let is_timeout = push.is_timeout(&rto);
             let if_fast_retransmit = self.fast_retransmission_wnd.contains(seq);
-            if !(
-                // fast retransmit
-                // TODO: test cases
-                (!self.disable_rto && is_timeout) || if_fast_retransmit
-            ) {
+            if !((!self.disable_rto && is_timeout) || if_fast_retransmit) {
                 continue;
             }
             let frag = FragBuilder {
