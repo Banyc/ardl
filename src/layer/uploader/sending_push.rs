@@ -12,6 +12,7 @@ pub struct SendingPush {
 }
 
 impl SendingPush {
+    #[must_use]
     pub fn new(body: Arc<BufPasta>) -> Self {
         SendingPush {
             body,
@@ -20,6 +21,7 @@ impl SendingPush {
         }
     }
 
+    #[must_use]
     pub fn body(&self) -> &Arc<BufPasta> {
         &self.body
     }
@@ -29,18 +31,22 @@ impl SendingPush {
         self.is_retransmitted = true;
     }
 
-    pub fn is_timeout(&self, timeout: &time::Duration) -> bool {
-        *timeout <= self.last_sent.elapsed()
-    }
+    // #[must_use]
+    // pub fn is_timeout(&self, timeout: &time::Duration) -> bool {
+    //     *timeout <= self.last_sent.elapsed()
+    // }
 
+    #[must_use]
     pub fn last_sent(&self) -> Instant {
         self.last_sent
     }
 
+    #[must_use]
     pub fn is_retransmitted(&self) -> bool {
         self.is_retransmitted
     }
 
+    #[must_use]
     pub fn since_last_sent(&self) -> time::Duration {
         Instant::now().duration_since(self.last_sent)
     }

@@ -240,16 +240,18 @@ impl Uploader {
         // write pushes from sending
         if !self.fast_retransmission_wnd.is_empty() {
             for (&seq, push) in self.swnd.iter_mut() {
+                if !(seq < self.fast_retransmission_wnd.end()) {
+                    break;
+                }
+                if !(self.fast_retransmission_wnd.start() <= seq) {
+                    continue;
+                }
                 if !(PUSH_HDR_LEN + 1 <= space) {
                     self.check_rep();
                     assert!(!frags.is_empty());
                     return frags;
                 }
                 if !(push.body().len() + PUSH_HDR_LEN <= space) {
-                    continue;
-                }
-                let if_fast_retransmit = self.fast_retransmission_wnd.contains(seq);
-                if !if_fast_retransmit {
                     continue;
                 }
                 {
@@ -364,8 +366,10 @@ impl Uploader {
             assert!(frag.len() <= space);
             frags.push(frag);
 
+            // register seq to the rto lookup
             self.last_sent_heap
                 .push(seq, cmp::Reverse(push.last_sent()));
+
             // register the body to swnd
             self.swnd.push_back(push);
 
