@@ -204,9 +204,13 @@ fn uploading(
                 loop {
                     let mut wtr = OwnedBufWtr::new(MTU, 0);
                     match uploader.output_packet(&mut wtr) {
-                        Ok(_) => {
-                            connection.send(wtr.data()).unwrap();
-                        }
+                        Ok(_) => match connection.send(wtr.data()) {
+                            Ok(_) => (),
+                            Err(e) => {
+                                println!("uploading: {}", e);
+                                break;
+                            }
+                        },
                         Err(e) => match e {
                             OutputError::NothingToOutput => break,
                             OutputError::BufferTooSmall => panic!(),
