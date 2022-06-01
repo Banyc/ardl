@@ -198,28 +198,16 @@ fn uploading(
         match msg {
             UploadingMessaging::SetUploadState(x) => {
                 uploader.set_state(x).unwrap();
+                output(&mut uploader, &connection);
             }
             UploadingMessaging::Flush => {
-                //
-                loop {
-                    let mut wtr = OwnedBufWtr::new(MTU, 0);
-                    match uploader.output_packet(&mut wtr) {
-                        Ok(_) => match connection.send(wtr.data()) {
-                            Ok(_) => (),
-                            Err(e) => {
-                                println!("uploading: {}", e);
-                                break;
-                            }
-                        },
-                        Err(e) => match e {
-                            OutputError::NothingToOutput => break,
-                            OutputError::BufferTooSmall => panic!(),
-                        },
-                    }
-                }
+                output(&mut uploader, &connection);
             }
             UploadingMessaging::ToSend(slice, responser) => match uploader.to_send(slice) {
-                Ok(()) => responser.send(UploadingToSendResponse::Ok).unwrap(),
+                Ok(()) => {
+                    responser.send(UploadingToSendResponse::Ok).unwrap();
+                    output(&mut uploader, &connection);
+                }
                 Err(e) => responser.send(UploadingToSendResponse::Err(e.0)).unwrap(),
             },
             UploadingMessaging::PrintStat => {
@@ -413,6 +401,25 @@ fn block_sending(
         // println!("got blocked");
         on_send_available_rx.recv().unwrap();
         // println!("got unblocked");
+    }
+}
+
+fn output(uploader: &mut Uploader, connection: &Arc<UdpSocket>) {
+    loop {
+        let mut wtr = OwnedBufWtr::new(MTU, 0);
+        match uploader.output_packet(&mut wtr) {
+            Ok(_) => match connection.send(wtr.data()) {
+                Ok(_) => (),
+                Err(e) => {
+                    println!("uploading: {}", e);
+                    break;
+                }
+            },
+            Err(e) => match e {
+                OutputError::NothingToOutput => break,
+                OutputError::BufferTooSmall => panic!(),
+            },
+        }
     }
 }
 

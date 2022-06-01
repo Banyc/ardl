@@ -161,27 +161,22 @@ fn uploading(
         match msg {
             UploadingMessaging::SetUploadState(state) => {
                 uploader.set_state(state).unwrap();
+                if let Some(remote_addr) = remote_addr_ {
+                    output(&mut uploader, &listener, &remote_addr);
+                }
             }
             UploadingMessaging::Flush => {
-                if let None = remote_addr_ {
-                    continue;
-                }
-
-                loop {
-                    let mut wtr = OwnedBufWtr::new(MTU, 0);
-                    match uploader.output_packet(&mut wtr) {
-                        Ok(_) => {
-                            listener.send_to(wtr.data(), remote_addr_.unwrap()).unwrap();
-                        }
-                        Err(e) => match e {
-                            OutputError::NothingToOutput => break,
-                            OutputError::BufferTooSmall => panic!(),
-                        },
-                    }
+                if let Some(remote_addr) = remote_addr_ {
+                    output(&mut uploader, &listener, &remote_addr);
                 }
             }
             UploadingMessaging::ToSend(slice, responser) => match uploader.to_send(slice) {
-                Ok(()) => responser.send(UploadingToSendResponse::Ok).unwrap(),
+                Ok(()) => {
+                    responser.send(UploadingToSendResponse::Ok).unwrap();
+                    if let Some(remote_addr) = remote_addr_ {
+                        output(&mut uploader, &listener, &remote_addr);
+                    }
+                }
                 Err(e) => responser.send(UploadingToSendResponse::Err(e.0)).unwrap(),
             },
             UploadingMessaging::PrintStat => {
@@ -356,6 +351,25 @@ fn block_sending(
         // println!("[main] got blocked");
         on_send_available_rx.recv().unwrap();
         // println!("[main] got unblocked");
+    }
+}
+
+fn output(uploader: &mut Uploader, listener: &Arc<UdpSocket>, remote_addr: &SocketAddr) {
+    loop {
+        let mut wtr = OwnedBufWtr::new(MTU, 0);
+        match uploader.output_packet(&mut wtr) {
+            Ok(_) => match listener.send_to(wtr.data(), remote_addr) {
+                Ok(_) => (),
+                Err(e) => {
+                    println!("uploading: {}", e);
+                    break;
+                }
+            },
+            Err(e) => match e {
+                OutputError::NothingToOutput => break,
+                OutputError::BufferTooSmall => panic!(),
+            },
+        }
     }
 }
 
