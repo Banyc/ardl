@@ -36,6 +36,18 @@ where
         self.start <= seq && seq < self.end
     }
 
+    pub fn start(&self) -> TSeq {
+        self.start
+    }
+
+    pub fn end(&self) -> TSeq {
+        self.end
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.end == self.start
+    }
+
     pub fn retransmitted(&mut self, seq: TSeq) {
         assert!(self.contains(seq));
         self.start = seq.add_usize(1);

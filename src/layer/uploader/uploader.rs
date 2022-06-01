@@ -1,8 +1,11 @@
 use std::{
+    cmp,
     collections::VecDeque,
     sync::{Arc, Weak},
-    time::{self, Duration},
+    time::{self, Duration, Instant},
 };
+
+use keyed_priority_queue::KeyedPriorityQueue;
 
 use crate::{
     protocol::{
@@ -34,6 +37,7 @@ pub struct Uploader {
     to_send_queue: buf::BufSlicerQue,
     swnd: Swnd<Seq32, SendingPush>,
     to_ack_queue: VecDeque<Seq32>,
+    last_sent_heap: KeyedPriorityQueue<Seq32, cmp::Reverse<Instant>>,
 
     // modified by setters
     local_rwnd_size: usize,
@@ -84,6 +88,7 @@ impl UploaderBuilder {
             ratio_rto_to_one_rtt: self.ratio_rto_to_one_rtt,
             disable_rto: false,
             on_send_available: None,
+            last_sent_heap: KeyedPriorityQueue::new(),
         };
         this.check_rep();
         this
@@ -233,41 +238,86 @@ impl Uploader {
 
         // retransmission
         // write pushes from sending
-        let rto = self.rto();
-        for (&seq, push) in self.swnd.iter_mut() {
-            if !(PUSH_HDR_LEN + 1 <= space) {
-                self.check_rep();
-                assert!(!frags.is_empty());
-                return frags;
-            }
-            if !(push.body().len() + PUSH_HDR_LEN <= space) {
-                continue;
-            }
-            let is_timeout = push.is_timeout(&rto);
-            let if_fast_retransmit = self.fast_retransmission_wnd.contains(seq);
-            if !((!self.disable_rto && is_timeout) || if_fast_retransmit) {
-                continue;
-            }
-            let frag = FragBuilder {
-                seq,
-                cmd: FragCommand::Push {
-                    body: Body::Pasta(Arc::clone(push.body())),
-                },
-            }
-            .build()
-            .unwrap();
-            space -= frag.len();
-            frags.push(frag);
-            push.to_retransmit(); // test case: `test_rto_once`
-            if if_fast_retransmit {
-                self.fast_retransmission_wnd.retransmitted(seq); // test case: `test_fast_retransmit`
+        if !self.fast_retransmission_wnd.is_empty() {
+            for (&seq, push) in self.swnd.iter_mut() {
+                if !(seq < self.fast_retransmission_wnd.end()) {
+                    break;
+                }
+                if !(self.fast_retransmission_wnd.start() <= seq) {
+                    continue;
+                }
+                if !(PUSH_HDR_LEN + 1 <= space) {
+                    self.check_rep();
+                    assert!(!frags.is_empty());
+                    return frags;
+                }
+                if !(push.body().len() + PUSH_HDR_LEN <= space) {
+                    continue;
+                }
+                {
+                    // add push to collection
+                    let frag = FragBuilder {
+                        seq,
+                        cmd: FragCommand::Push {
+                            body: Body::Pasta(Arc::clone(push.body())),
+                        },
+                    }
+                    .build()
+                    .unwrap();
+                    space -= frag.len();
+                    frags.push(frag);
+                    push.to_retransmit(); // test case: `test_rto_once`
+                    self.last_sent_heap
+                        .set_priority(&seq, cmp::Reverse(push.last_sent()))
+                        .unwrap();
+                }
+                self.fast_retransmission_wnd.retransmitted(seq);
                 self.stat.fast_retransmissions += 1;
+                self.stat.retransmissions += 1;
+                self.stat.pushes += 1;
             }
-            if is_timeout {
-                self.stat.rto_hits += 1;
+        }
+        // min heap for rto
+        let rto = self.rto();
+        if !self.disable_rto {
+            loop {
+                if let Some((&seq, last_sent)) = self.last_sent_heap.peek() {
+                    let last_sent = last_sent.0;
+                    if Instant::now().duration_since(last_sent) < rto {
+                        break;
+                    }
+                    // write
+                    if let Some(push) = self.swnd.value_mut(&seq) {
+                        if !(push.body().len() + PUSH_HDR_LEN <= space) {
+                            break;
+                        }
+                        {
+                            // add push to collection
+                            let frag = FragBuilder {
+                                seq,
+                                cmd: FragCommand::Push {
+                                    body: Body::Pasta(Arc::clone(push.body())),
+                                },
+                            }
+                            .build()
+                            .unwrap();
+                            space -= frag.len();
+                            frags.push(frag);
+                            push.to_retransmit();
+                            self.last_sent_heap
+                                .set_priority(&seq, cmp::Reverse(push.last_sent()))
+                                .unwrap();
+                        }
+                        self.stat.rto_hits += 1;
+                        self.stat.retransmissions += 1;
+                        self.stat.pushes += 1;
+                    } else {
+                        self.last_sent_heap.pop().unwrap();
+                    }
+                } else {
+                    break;
+                }
             }
-            self.stat.retransmissions += 1;
-            self.stat.pushes += 1;
         }
 
         if self.to_send_queue.is_empty() {
@@ -304,8 +354,9 @@ impl Uploader {
             let push = SendingPush::new(Arc::new(body));
 
             // write the frag, including its hdr and body, to output buffer
+            let seq = self.swnd.end();
             let frag = FragBuilder {
-                seq: self.swnd.end(),
+                seq,
                 cmd: FragCommand::Push {
                     body: Body::Pasta(Arc::clone(push.body())),
                 },
@@ -314,6 +365,10 @@ impl Uploader {
             .unwrap();
             assert!(frag.len() <= space);
             frags.push(frag);
+
+            // register seq to the rto lookup
+            self.last_sent_heap
+                .push(seq, cmp::Reverse(push.last_sent()));
 
             // register the body to swnd
             self.swnd.push_back(push);

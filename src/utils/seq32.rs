@@ -2,7 +2,7 @@ use std::{cmp::Ordering, num::Wrapping};
 
 use crate::utils::Seq;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct Seq32 {
     n: u32,
 }
