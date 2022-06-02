@@ -148,7 +148,7 @@ fn uploading(
     loop {
         let msg = messaging.recv().unwrap();
         match msg {
-            UploadingMessaging::SetUploadStates(x) => {
+            UploadingMessaging::SetUploadState(x) => {
                 uploader.set_state(x).unwrap();
             }
             UploadingMessaging::Flush => {
@@ -195,7 +195,7 @@ fn downloading(
         match msg {
             DownloadingMessaging::ConnRecv(wtr) => {
                 let rdr = BufSlice::from_wtr(wtr);
-                let set_upload_states = match downloader.input_packet(rdr) {
+                let set_upload_state = match downloader.input_packet(rdr) {
                     Ok(x) => x,
                     Err(e) => {
                         println!("err: download.input ({:?})", e);
@@ -204,7 +204,7 @@ fn downloading(
                     }
                 };
                 uploading_messaging_tx
-                    .send(UploadingMessaging::SetUploadStates(set_upload_states))
+                    .send(UploadingMessaging::SetUploadState(set_upload_state))
                     .unwrap();
 
                 let mut buf = Vec::new();
@@ -252,7 +252,7 @@ fn socket_receiving(
 }
 
 enum UploadingMessaging {
-    SetUploadStates(SetUploadState),
+    SetUploadState(SetUploadState),
     Flush,
     ToSend(BufSlice, mpsc::SyncSender<UploadingToSendResponse>),
     PrintStat,
