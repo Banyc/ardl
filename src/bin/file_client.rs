@@ -25,7 +25,7 @@ const TO_SEND_QUEUE_LEN_CAP: usize = 1024;
 const SWND_SIZE_CAP: usize = 1024;
 const SOURCE_FILE_NAME: &str = "Free_Test_Data_10MB_MP4.upload.mp4";
 const DESTINATION_FILE_NAME: &str = "Free_Test_Data_10MB_MP4.download.mp4";
-static NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = SWND_SIZE_CAP * 1 / 16;
+static NACK_DUPLICATE_THRESHOLD_TO_ACTIVATE_FAST_RETRANSMIT: usize = SWND_SIZE_CAP * 1 / 2;
 
 fn main() {
     // file
