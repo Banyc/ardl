@@ -239,13 +239,10 @@ impl Uploader {
         // retransmission
         // write pushes from sending
         if !self.fast_retransmission_wnd.is_empty() {
-            for (&seq, push) in self.swnd.iter_mut() {
-                if !(seq < self.fast_retransmission_wnd.end()) {
-                    break;
-                }
-                if !(self.fast_retransmission_wnd.start() <= seq) {
-                    continue;
-                }
+            for (&seq, push) in self.swnd.range_mut(
+                self.fast_retransmission_wnd.start(),
+                self.fast_retransmission_wnd.end(),
+            ) {
                 if !(PUSH_HDR_LEN + 1 <= space) {
                     self.check_rep();
                     assert!(!frags.is_empty());

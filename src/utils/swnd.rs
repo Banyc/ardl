@@ -55,8 +55,8 @@ where
     }
 
     #[must_use]
-    pub fn iter_mut(&mut self) -> btree_map::IterMut<'_, TSeq, T> {
-        self.wnd.iter_mut()
+    pub fn range_mut(&mut self, start: TSeq, end: TSeq) -> btree_map::RangeMut<'_, TSeq, T> {
+        self.wnd.range_mut(start..end)
     }
 
     #[must_use]
