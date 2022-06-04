@@ -33,6 +33,16 @@ impl Builder {
         .map_err(|e| BuildError::Downloader(e))?;
         Ok((upload, download))
     }
+
+    pub fn default() -> Self {
+        Builder {
+            local_recv_buf_len: 1024,
+            nack_duplicate_threshold_to_activate_fast_retransmit: 1024 * 1 / 2,
+            ratio_rto_to_one_rtt: 1.5,
+            to_send_queue_len_cap: 1024,
+            swnd_size_cap: 1024,
+        }
+    }
 }
 
 #[derive(Debug)]
