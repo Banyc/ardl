@@ -1,13 +1,12 @@
+use ardl::{
+    layer::{Builder, Downloader, IObserver, OutputError, SetUploadState, Uploader},
+    utils::buf::{BufSlice, BufWtr, OwnedBufWtr},
+};
 use std::{
     net::{SocketAddr, UdpSocket},
     sync::{mpsc, Arc},
     thread,
     time::{self, Duration, SystemTime},
-};
-
-use ardl::{
-    layer::{Builder, Downloader, IObserver, OutputError, SetUploadState, Uploader},
-    utils::buf::{BufSlice, BufWtr, OwnedBufWtr},
 };
 
 const MTU: usize = 1300;

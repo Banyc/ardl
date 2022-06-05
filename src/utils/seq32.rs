@@ -1,6 +1,5 @@
-use std::{cmp::Ordering, num::Wrapping};
-
 use crate::utils::Seq;
+use std::{cmp::Ordering, num::Wrapping};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct Seq32 {

@@ -1,3 +1,4 @@
+use super::SetUploadState;
 use crate::{
     protocol::{
         frag::{Body, Frag, FragCommand},
@@ -8,8 +9,6 @@ use crate::{
         RecvBuf, Seq32, SeqLocationToRwnd,
     },
 };
-
-use super::SetUploadState;
 
 pub struct Downloader {
     recv_buf: RecvBuf<Seq32, BufSlice>,

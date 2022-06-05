@@ -1,12 +1,7 @@
-use std::{
-    cmp,
-    collections::VecDeque,
-    sync::{Arc, Weak},
-    time::{self, Duration, Instant},
+use super::{
+    super::{IObserver, SetUploadState},
+    SendingPush,
 };
-
-use keyed_priority_queue::KeyedPriorityQueue;
-
 use crate::{
     protocol::{
         frag::{Body, Frag, FragBuilder, FragCommand, ACK_HDR_LEN, PUSH_HDR_LEN},
@@ -18,10 +13,12 @@ use crate::{
         FastRetransmissionWnd, Seq32, Swnd,
     },
 };
-
-use super::{
-    super::{IObserver, SetUploadState},
-    SendingPush,
+use keyed_priority_queue::KeyedPriorityQueue;
+use std::{
+    cmp,
+    collections::VecDeque,
+    sync::{Arc, Weak},
+    time::{self, Duration, Instant},
 };
 
 const ALPHA: f64 = 1.0 / 8.0;

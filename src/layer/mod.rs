@@ -1,11 +1,11 @@
-use crate::utils::Seq32;
-
 mod downloader;
-pub use downloader::*;
-mod uploader;
-pub use uploader::*;
 mod observer;
+mod uploader;
+
+use crate::utils::Seq32;
+pub use downloader::*;
 pub use observer::*;
+pub use uploader::*;
 
 pub struct Builder {
     pub local_recv_buf_len: usize,

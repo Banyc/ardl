@@ -1,6 +1,5 @@
-use std::collections::VecDeque;
-
 use super::BufSlice;
+use std::collections::VecDeque;
 
 pub struct BufSlicerQue {
     queue: VecDeque<BufSlice>,

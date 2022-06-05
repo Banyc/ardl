@@ -1,6 +1,5 @@
-use std::collections::{btree_map, BTreeMap};
-
 use crate::utils::Seq;
+use std::collections::{btree_map, BTreeMap};
 
 pub struct Swnd<TSeq, T>
 where

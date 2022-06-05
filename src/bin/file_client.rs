@@ -1,3 +1,7 @@
+use ardl::{
+    layer::{Builder, Downloader, IObserver, OutputError, SetUploadState, Uploader},
+    utils::buf::{BufSlice, BufWtr, OwnedBufWtr},
+};
 use std::{
     fs::{self, File},
     io::{self, Read, Write},
@@ -7,11 +11,6 @@ use std::{
     sync::{mpsc, Arc},
     thread,
     time::{self, Duration, Instant, SystemTime},
-};
-
-use ardl::{
-    layer::{Builder, Downloader, IObserver, OutputError, SetUploadState, Uploader},
-    utils::buf::{BufSlice, BufWtr, OwnedBufWtr},
 };
 
 const MTU: usize = 1300;

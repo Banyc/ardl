@@ -1,14 +1,11 @@
-use std::{io::Cursor, sync::Arc};
-
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
-
+use super::{DecodingError, EncodingError};
 use crate::utils::{
     buf::{BufPasta, BufSlice, BufWtr},
     Seq32,
 };
-
-use super::{DecodingError, EncodingError};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use std::{io::Cursor, sync::Arc};
 
 pub const PUSH_HDR_LEN: usize = 9;
 pub const ACK_HDR_LEN: usize = 5;

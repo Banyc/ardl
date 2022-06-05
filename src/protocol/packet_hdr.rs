@@ -1,13 +1,10 @@
-use std::io::Cursor;
-
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-
+use super::{DecodingError, EncodingError};
 use crate::utils::{
     buf::{BufSlice, BufWtr},
     Seq32,
 };
-
-use super::{DecodingError, EncodingError};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use std::io::Cursor;
 
 pub const PACKET_HDR_LEN: usize = 6;
 

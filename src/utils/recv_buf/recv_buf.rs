@@ -1,8 +1,6 @@
-use std::collections::VecDeque;
-
-use crate::utils::Seq;
-
 use super::{rwnd::Rwnd, SeqLocationToRwnd};
+use crate::utils::Seq;
+use std::collections::VecDeque;
 
 pub struct RecvBuf<TSeq, T>
 where

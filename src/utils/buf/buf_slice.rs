@@ -1,6 +1,5 @@
-use std::{ops::Range, sync::Arc};
-
 use super::{BufWtr, OwnedBufWtr};
+use std::{ops::Range, sync::Arc};
 
 pub struct BufSlice {
     buf: Arc<OwnedBufWtr>,

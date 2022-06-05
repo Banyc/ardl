@@ -1,8 +1,6 @@
-use std::collections::BTreeMap;
-
-use crate::utils::Seq;
-
 use super::SeqLocationToRwnd;
+use crate::utils::Seq;
+use std::collections::BTreeMap;
 
 pub struct Rwnd<TSeq, T>
 where

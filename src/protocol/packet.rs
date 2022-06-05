@@ -1,6 +1,5 @@
-use crate::utils::buf::{BufSlice, BufWtr};
-
 use super::{frag::Frag, packet_hdr::PacketHeader, DecodingError, EncodingError};
+use crate::utils::buf::{BufSlice, BufWtr};
 
 pub struct Packet {
     hdr: PacketHeader,
