@@ -309,7 +309,7 @@ impl Uploader {
             // get as many bytes from to_send_queue to body
             let frag_body_limit = match PUSH_HDR_LEN + 1 <= bundler.loading_space() {
                 true => bundler.loading_space() - PUSH_HDR_LEN,
-                false => space,
+                false => space - PUSH_HDR_LEN, // TODO: test when all body limit is used
             };
             assert!(frag_body_limit != 0);
             let mut body = BufPasta::new();
