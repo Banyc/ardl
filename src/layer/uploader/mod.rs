@@ -1,3 +1,4 @@
+mod frag_bundler;
 mod sending_push;
 mod uploader;
 

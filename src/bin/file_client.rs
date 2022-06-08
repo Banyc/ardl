@@ -1,5 +1,5 @@
 use ardl::{
-    layer::{Builder, Downloader, IObserver, OutputError, SetUploadState, Uploader},
+    layer::{Builder, Downloader, IObserver, SetUploadState, Uploader},
     utils::buf::{BufSlice, BufWtr, OwnedBufWtr},
 };
 use std::{
@@ -65,6 +65,7 @@ fn main() {
         ratio_rto_to_one_rtt: RATIO_RTO_TO_ONE_RTT,
         to_send_queue_len_cap: TO_SEND_QUEUE_LEN_CAP,
         swnd_size_cap: SWND_SIZE_CAP,
+        mtu: MTU,
     }
     .build()
     .unwrap();
@@ -404,21 +405,19 @@ fn block_sending(
 }
 
 fn output(uploader: &mut Uploader, connection: &Arc<UdpSocket>) {
-    loop {
-        let mut wtr = OwnedBufWtr::new(MTU, 0);
-        match uploader.output_packet(&mut wtr) {
-            Ok(_) => match connection.send(wtr.data()) {
-                Ok(_) => (),
-                Err(e) => {
-                    println!("uploading: {}", e);
-                    break;
-                }
-            },
-            Err(e) => match e {
-                OutputError::NothingToOutput => break,
-                OutputError::BufferTooSmall => panic!(),
-            },
+    let mut wtr = OwnedBufWtr::new(MTU, 0);
+    let wtr_data_len = wtr.data_len();
+    let packets = uploader.output_packets();
+    for packet in packets {
+        packet.append_to(&mut wtr).unwrap();
+        match connection.send(wtr.data()) {
+            Ok(_) => (),
+            Err(e) => {
+                println!("uploading: {}", e);
+                break;
+            }
         }
+        wtr.shrink_back(wtr.data_len() - wtr_data_len).unwrap();
     }
 }
 

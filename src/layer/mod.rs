@@ -13,25 +13,28 @@ pub struct Builder {
     pub ratio_rto_to_one_rtt: f64,
     pub to_send_queue_len_cap: usize,
     pub swnd_size_cap: usize,
+    pub mtu: usize,
 }
 
 impl Builder {
     pub fn build(self) -> Result<(Uploader, Downloader), BuildError> {
-        let upload = UploaderBuilder {
+        let uploader = UploaderBuilder {
             local_recv_buf_len: self.local_recv_buf_len,
             nack_duplicate_threshold_to_activate_fast_retransmit: self
                 .nack_duplicate_threshold_to_activate_fast_retransmit,
             ratio_rto_to_one_rtt: self.ratio_rto_to_one_rtt,
             to_send_queue_len_cap: self.to_send_queue_len_cap,
             swnd_size_cap: self.swnd_size_cap,
+            mtu: self.mtu,
         }
-        .build();
-        let download = DownloaderBuilder {
+        .build()
+        .map_err(|e| BuildError::Uploader(e))?;
+        let downloader = DownloaderBuilder {
             recv_buf_len: self.local_recv_buf_len,
         }
         .build()
         .map_err(|e| BuildError::Downloader(e))?;
-        Ok((upload, download))
+        Ok((uploader, downloader))
     }
 
     pub fn default() -> Self {
@@ -41,6 +44,7 @@ impl Builder {
             ratio_rto_to_one_rtt: 1.5,
             to_send_queue_len_cap: 1024,
             swnd_size_cap: 1024,
+            mtu: 1300,
         }
     }
 }
@@ -48,6 +52,7 @@ impl Builder {
 #[derive(Debug)]
 pub enum BuildError {
     Downloader(downloader::BuildError),
+    Uploader(uploader::BuildError),
 }
 
 pub struct SetUploadState {
@@ -67,6 +72,8 @@ mod tests {
 
     use super::Builder;
 
+    const MTU: usize = 1024;
+
     #[test]
     fn test_few_1() {
         let (mut upload1, mut download1) = Builder {
@@ -75,6 +82,7 @@ mod tests {
             ratio_rto_to_one_rtt: 1.5,
             to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
+            mtu: MTU,
         }
         .build()
         .unwrap();
@@ -84,6 +92,7 @@ mod tests {
             ratio_rto_to_one_rtt: 1.5,
             to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
+            mtu: MTU,
         }
         .build()
         .unwrap();
@@ -95,7 +104,11 @@ mod tests {
             upload1.to_send(slice).map_err(|_| ()).unwrap();
 
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            upload1.output_packet(&mut inflight).unwrap();
+            let packets = upload1.output_packets();
+
+            assert_eq!(packets.len(), 1);
+
+            packets[0].append_to(&mut inflight).unwrap();
 
             assert_eq!(
                 inflight.data(),
@@ -119,7 +132,11 @@ mod tests {
         // ack: 1 <- 2
         {
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            upload2.output_packet(&mut inflight).unwrap();
+            let packets = upload2.output_packets();
+
+            assert_eq!(packets.len(), 1);
+
+            packets[0].append_to(&mut inflight).unwrap();
 
             //                               rwnd] [     nack] [      seq] [cmd
             assert_eq!(inflight.data(), vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -138,6 +155,7 @@ mod tests {
             ratio_rto_to_one_rtt: 1.5,
             to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
+            mtu: MTU,
         }
         .build()
         .unwrap();
@@ -147,6 +165,7 @@ mod tests {
             ratio_rto_to_one_rtt: 1.5,
             to_send_queue_len_cap: usize::MAX,
             swnd_size_cap: usize::MAX,
+            mtu: MTU,
         }
         .build()
         .unwrap();
@@ -158,7 +177,11 @@ mod tests {
             upload1.to_send(slice).map_err(|_| ()).unwrap();
 
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            upload1.output_packet(&mut inflight).unwrap();
+            let packets = upload1.output_packets();
+
+            assert_eq!(packets.len(), 1);
+
+            packets[0].append_to(&mut inflight).unwrap();
 
             assert_eq!(
                 inflight.data(),
@@ -182,7 +205,11 @@ mod tests {
         // ack: 1 <- 2
         {
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            upload2.output_packet(&mut inflight).unwrap();
+            let packets = upload2.output_packets();
+
+            assert_eq!(packets.len(), 1);
+
+            packets[0].append_to(&mut inflight).unwrap();
 
             //                               rwnd] [     nack] [      seq] [cmd
             assert_eq!(inflight.data(), vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -193,7 +220,11 @@ mod tests {
         // retransmit: 1 -> 2
         {
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            upload1.output_packet(&mut inflight).unwrap();
+            let packets = upload1.output_packets();
+
+            assert_eq!(packets.len(), 1);
+
+            packets[0].append_to(&mut inflight).unwrap();
 
             assert_eq!(
                 inflight.data(),

@@ -1,5 +1,5 @@
 use ardl::{
-    layer::{Builder, Downloader, IObserver, OutputError, SetUploadState, Uploader},
+    layer::{Builder, Downloader, IObserver, SetUploadState, Uploader},
     protocol::{frag::PUSH_HDR_LEN, packet_hdr::PACKET_HDR_LEN},
     utils::buf::{BufSlice, BufWtr, OwnedBufWtr},
 };
@@ -45,6 +45,7 @@ fn main() {
         ratio_rto_to_one_rtt: RATIO_RTO_TO_ONE_RTT,
         to_send_queue_len_cap: TO_SEND_QUEUE_LEN_CAP,
         swnd_size_cap: MAX_SWND_SIZE,
+        mtu: MTU,
     }
     .build()
     .unwrap();
@@ -151,16 +152,7 @@ fn uploading(
                 uploader.set_state(x).unwrap();
             }
             UploadingMessaging::Flush => {
-                let mut wtr = OwnedBufWtr::new(MTU, 0);
-                match uploader.output_packet(&mut wtr) {
-                    Ok(_) => {
-                        connection.send(wtr.data()).unwrap();
-                    }
-                    Err(e) => match e {
-                        OutputError::NothingToOutput => (),
-                        OutputError::BufferTooSmall => panic!(),
-                    },
-                }
+                output(&mut uploader, &connection);
             }
             UploadingMessaging::ToSend(slice, responser) => match uploader.to_send(slice) {
                 Ok(()) => responser.send(UploadingToSendResponse::Ok).unwrap(),
@@ -289,6 +281,23 @@ fn block_sending(
         // println!("got blocked");
         on_send_available_rx.recv().unwrap();
         // println!("got unblocked");
+    }
+}
+
+fn output(uploader: &mut Uploader, connection: &Arc<UdpSocket>) {
+    let mut wtr = OwnedBufWtr::new(MTU, 0);
+    let wtr_data_len = wtr.data_len();
+    let packets = uploader.output_packets();
+    for packet in packets {
+        packet.append_to(&mut wtr).unwrap();
+        match connection.send(wtr.data()) {
+            Ok(_) => (),
+            Err(e) => {
+                println!("uploading: {}", e);
+                break;
+            }
+        }
+        wtr.shrink_back(wtr.data_len() - wtr_data_len).unwrap();
     }
 }
 
