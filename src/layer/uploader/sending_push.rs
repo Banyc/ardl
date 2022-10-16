@@ -5,6 +5,7 @@ use std::{
 
 use crate::utils::buf::BufPasta;
 
+/// Represents a PUSH message that has not been acknowledged by the peer yet.
 pub struct SendingPush {
     body: Arc<BufPasta>,
     last_sent: time::Instant,
