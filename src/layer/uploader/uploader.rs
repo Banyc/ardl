@@ -49,9 +49,6 @@ pub struct Uploader {
     ratio_rto_to_one_rtt: f64,
     mtu: usize,
 
-    // unit tests
-    disable_rto: bool,
-
     // observer
     on_send_available: Option<Weak<dyn IObserver + Send + Sync + 'static>>,
 }
@@ -92,7 +89,6 @@ impl UploaderBuilder {
             ),
             ratio_rto_to_one_rtt: self.ratio_rto_to_one_rtt,
             mtu: self.mtu,
-            disable_rto: false,
             on_send_available: None,
             last_sent_heap: KeyedPriorityQueue::new(),
         };
@@ -271,40 +267,38 @@ impl Uploader {
         }
         // min heap for rto
         let rto = self.rto();
-        if !self.disable_rto {
-            for _ in 0..self.last_sent_heap.len() {
-                if let Some((&seq, last_sent)) = self.last_sent_heap.peek() {
-                    let last_sent = last_sent.0;
-                    if now.duration_since(last_sent) < rto {
-                        break;
-                    }
-                    // write
-                    if let Some(push) = self.swnd.value_mut(&seq) {
-                        {
-                            // add push to collection
-                            let frag = FragBuilder {
-                                seq,
-                                cmd: FragCommand::Push {
-                                    body: Body::Pasta(Arc::clone(push.body())),
-                                },
-                            }
-                            .build()
-                            .unwrap();
-                            bundler.pack(frag).unwrap();
-                            push.to_retransmit(*now);
-                            self.last_sent_heap
-                                .set_priority(&seq, cmp::Reverse(push.last_sent()))
-                                .unwrap();
-                        }
-                        self.stat.rto_hits += 1;
-                        self.stat.retransmissions += 1;
-                        self.stat.pushes += 1;
-                    } else {
-                        self.last_sent_heap.pop().unwrap();
-                    }
-                } else {
+        for _ in 0..self.last_sent_heap.len() {
+            if let Some((&seq, last_sent)) = self.last_sent_heap.peek() {
+                let last_sent = last_sent.0;
+                if now.duration_since(last_sent) < rto {
                     break;
                 }
+                // write
+                if let Some(push) = self.swnd.value_mut(&seq) {
+                    {
+                        // add push to collection
+                        let frag = FragBuilder {
+                            seq,
+                            cmd: FragCommand::Push {
+                                body: Body::Pasta(Arc::clone(push.body())),
+                            },
+                        }
+                        .build()
+                        .unwrap();
+                        bundler.pack(frag).unwrap();
+                        push.to_retransmit(*now);
+                        self.last_sent_heap
+                            .set_priority(&seq, cmp::Reverse(push.last_sent()))
+                            .unwrap();
+                    }
+                    self.stat.rto_hits += 1;
+                    self.stat.retransmissions += 1;
+                    self.stat.pushes += 1;
+                } else {
+                    self.last_sent_heap.pop().unwrap();
+                }
+            } else {
+                break;
             }
         }
 
@@ -513,7 +507,6 @@ mod tests {
     fn test_few_1() {
         let now = Instant::now();
         let mut uploader = UploaderBuilder::default().build().unwrap();
-        uploader.disable_rto = true;
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin = vec![0, 1, 2];
         buf.append(&origin).unwrap();
@@ -762,7 +755,6 @@ mod tests {
         }
         .build()
         .unwrap();
-        uploader.disable_rto = true;
         uploader.set_remote_rwnd_size(2);
 
         let origin1 = vec![0, 1, 2];
@@ -812,7 +804,6 @@ mod tests {
         }
         .build()
         .unwrap();
-        uploader.disable_rto = true;
         uploader.set_remote_rwnd_size(2);
 
         let origin1 = vec![0, 1, 2];
@@ -866,7 +857,6 @@ mod tests {
         }
         .build()
         .unwrap();
-        uploader.disable_rto = true;
         uploader.set_remote_rwnd_size(99);
 
         let origin1 = vec![0, 1, 2];
@@ -932,7 +922,6 @@ mod tests {
         }
         .build()
         .unwrap();
-        uploader.disable_rto = true;
         uploader.set_remote_rwnd_size(99);
 
         let origin1 = vec![0, 1, 2];
@@ -1013,7 +1002,6 @@ mod tests {
         }
         .build()
         .unwrap();
-        // uploader.disable_rto = true;
 
         //           0  1  2  3
         // to_ack
@@ -1151,7 +1139,6 @@ mod tests {
         }
         .build()
         .unwrap();
-        uploader.disable_rto = true;
 
         uploader
             .write(BufSlice::from_bytes(vec![0, 1]))
