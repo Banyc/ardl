@@ -112,7 +112,7 @@ impl Downloader {
             self.check_rep();
             Error::Decoding
         })?;
-        let packet_state = self.handle_packet(packet);
+        let packet_state = self.write_packet(packet);
         let state = SetUploadState {
             remote_rwnd_size: packet_state.remote_rwnd,
             remote_nack: packet_state.remote_nack,
@@ -126,9 +126,9 @@ impl Downloader {
     }
 
     #[must_use]
-    fn handle_packet(&mut self, packet: Packet) -> PacketState {
+    fn write_packet(&mut self, packet: Packet) -> PacketState {
         let packet = packet.into_builder();
-        let frags_state = self.handle_frags(packet.frags);
+        let frags_state = self.write_frags(packet.frags);
         let state = PacketState {
             frags: frags_state,
             remote_rwnd: packet.hdr.rwnd(),
@@ -140,7 +140,7 @@ impl Downloader {
     }
 
     #[must_use]
-    fn handle_frags(&mut self, frags: Vec<Frag>) -> FragsState {
+    fn write_frags(&mut self, frags: Vec<Frag>) -> FragsState {
         let mut remote_seqs_to_ack = Vec::new();
         let mut acked_local_seqs = Vec::new();
         for frag in frags {
