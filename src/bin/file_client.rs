@@ -197,13 +197,13 @@ fn uploading(
         let msg = messaging.recv().unwrap();
         match msg {
             UploadingMessaging::SetUploadState(x) => {
-                uploader.set_state(x).unwrap();
+                uploader.set_state(x, &Instant::now()).unwrap();
                 output(&mut uploader, &connection);
             }
             UploadingMessaging::Flush => {
                 output(&mut uploader, &connection);
             }
-            UploadingMessaging::ToSend(slice, responser) => match uploader.to_send(slice) {
+            UploadingMessaging::ToSend(slice, responser) => match uploader.write(slice) {
                 Ok(()) => {
                     responser.send(UploadingToSendResponse::Ok).unwrap();
                     output(&mut uploader, &connection);
@@ -240,7 +240,7 @@ fn downloading(
         match msg {
             DownloadingMessaging::ConnRecv(wtr) => {
                 let rdr = BufSlice::from_wtr(wtr);
-                let set_upload_state = match downloader.input_packet(rdr) {
+                let set_upload_state = match downloader.write(rdr) {
                     Ok(x) => x,
                     Err(e) => {
                         println!("err: download.input ({:?})", e);
@@ -252,7 +252,7 @@ fn downloading(
                     .send(UploadingMessaging::SetUploadState(set_upload_state))
                     .unwrap();
                 if is_processing_free {
-                    if let Some(slice) = downloader.recv() {
+                    if let Some(slice) = downloader.emit() {
                         processing_messaging_tx
                             .send(ProcessingMessaging::Recv(slice))
                             .unwrap();
@@ -275,7 +275,7 @@ fn downloading(
             }
             DownloadingMessaging::ProcessingIsFree => {
                 is_processing_free = true;
-                if let Some(slice) = downloader.recv() {
+                if let Some(slice) = downloader.emit() {
                     processing_messaging_tx
                         .send(ProcessingMessaging::Recv(slice))
                         .unwrap();
@@ -407,7 +407,7 @@ fn block_sending(
 fn output(uploader: &mut Uploader, connection: &Arc<UdpSocket>) {
     let mut wtr = OwnedBufWtr::new(MTU, 0);
     let wtr_data_len = wtr.data_len();
-    let packets = uploader.output_packets();
+    let packets = uploader.emit(&Instant::now());
     for packet in packets {
         packet.append_to(&mut wtr).unwrap();
         match connection.send(wtr.data()) {

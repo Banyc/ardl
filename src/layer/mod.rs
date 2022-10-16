@@ -66,7 +66,7 @@ pub struct SetUploadState {
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
+    use std::time::Instant;
 
     use crate::utils::buf::{BufSlice, BufWtr, OwnedBufWtr};
 
@@ -76,6 +76,7 @@ mod tests {
 
     #[test]
     fn test_few_1() {
+        let now = Instant::now();
         let (mut upload1, mut download1) = Builder {
             local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
@@ -101,10 +102,10 @@ mod tests {
         {
             let buf = vec![0, 1, 2];
             let slice = BufSlice::from_bytes(buf);
-            upload1.to_send(slice).map_err(|_| ()).unwrap();
+            upload1.write(slice).map_err(|_| ()).unwrap();
 
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            let packets = upload1.output_packets();
+            let packets = upload1.emit(&now);
 
             assert_eq!(packets.len(), 1);
 
@@ -123,16 +124,16 @@ mod tests {
             );
 
             let inflight = BufSlice::from_wtr(inflight);
-            let upload2_changes = download2.input_packet(inflight).unwrap();
-            upload2.set_state(upload2_changes).unwrap();
+            let upload2_changes = download2.write(inflight).unwrap();
+            upload2.set_state(upload2_changes, &now).unwrap();
 
-            let recv2 = download2.recv().unwrap();
+            let recv2 = download2.emit().unwrap();
             assert_eq!(recv2.data(), vec![0, 1, 2]);
         }
         // ack: 1 <- 2
         {
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            let packets = upload2.output_packets();
+            let packets = upload2.emit(&now);
 
             assert_eq!(packets.len(), 1);
 
@@ -142,13 +143,14 @@ mod tests {
             assert_eq!(inflight.data(), vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
             let inflight = BufSlice::from_wtr(inflight);
-            let upload1_changes = download1.input_packet(inflight).unwrap();
-            upload1.set_state(upload1_changes).unwrap();
+            let upload1_changes = download1.write(inflight).unwrap();
+            upload1.set_state(upload1_changes, &now).unwrap();
         }
     }
 
     #[test]
     fn test_rto() {
+        let mut now = Instant::now();
         let (mut upload1, mut _download1) = Builder {
             local_recv_buf_len: 2,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
@@ -174,10 +176,10 @@ mod tests {
         {
             let buf = vec![0, 1, 2];
             let slice = BufSlice::from_bytes(buf);
-            upload1.to_send(slice).map_err(|_| ()).unwrap();
+            upload1.write(slice).map_err(|_| ()).unwrap();
 
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            let packets = upload1.output_packets();
+            let packets = upload1.emit(&now);
 
             assert_eq!(packets.len(), 1);
 
@@ -196,16 +198,16 @@ mod tests {
             );
 
             let inflight = BufSlice::from_wtr(inflight);
-            let upload2_changes = download2.input_packet(inflight).unwrap();
-            upload2.set_state(upload2_changes).unwrap();
+            let upload2_changes = download2.write(inflight).unwrap();
+            upload2.set_state(upload2_changes, &now).unwrap();
 
-            let recv2 = download2.recv().unwrap();
+            let recv2 = download2.emit().unwrap();
             assert_eq!(recv2.data(), vec![0, 1, 2]);
         }
         // ack: 1 <- 2
         {
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            let packets = upload2.output_packets();
+            let packets = upload2.emit(&now);
 
             assert_eq!(packets.len(), 1);
 
@@ -216,11 +218,11 @@ mod tests {
 
             // dropped
         }
-        thread::sleep(upload1.rto());
+        now += upload1.rto();
         // retransmit: 1 -> 2
         {
             let mut inflight = OwnedBufWtr::new(1024, 0);
-            let packets = upload1.output_packets();
+            let packets = upload1.emit(&now);
 
             assert_eq!(packets.len(), 1);
 

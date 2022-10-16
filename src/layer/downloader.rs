@@ -74,14 +74,14 @@ impl Downloader {
     }
 
     #[must_use]
-    pub fn recv(&mut self) -> Option<BufSlice> {
+    pub fn emit(&mut self) -> Option<BufSlice> {
         let received = self.recv_buf.pop_front();
         self.check_rep();
         received
     }
 
     #[must_use]
-    pub fn recv_max(&mut self, max_len: usize) -> Option<BufSlice> {
+    pub fn emit_max(&mut self, max_len: usize) -> Option<BufSlice> {
         let leftover = self.leftover.take();
         let slice = if let Some(slice) = leftover {
             slice
@@ -106,7 +106,7 @@ impl Downloader {
     }
 
     #[must_use]
-    pub fn input_packet(&mut self, mut slice: buf::BufSlice) -> Result<SetUploadState, Error> {
+    pub fn write(&mut self, mut slice: buf::BufSlice) -> Result<SetUploadState, Error> {
         let packet = Packet::from_slice(&mut slice).map_err(|_| {
             self.stat.decoding_errors += 1;
             self.check_rep();
@@ -247,7 +247,7 @@ mod tests {
 
         let origin1 = vec![];
         let slice = BufSlice::from_bytes(origin1);
-        let changes = download.input_packet(slice);
+        let changes = download.write(slice);
         assert!(changes.is_err());
     }
 
@@ -279,7 +279,7 @@ mod tests {
         let mut wtr = OwnedBufWtr::new(1024, 0);
         packet.append_to(&mut wtr).unwrap();
         let slice = BufSlice::from_wtr(wtr);
-        let state = downloader.input_packet(slice).unwrap();
+        let state = downloader.write(slice).unwrap();
         assert_eq!(state.local_next_seq_to_receive.to_u32(), 1);
         assert_eq!(state.local_rwnd_size, 2);
         assert_eq!(state.remote_nack.to_u32(), 0);
@@ -287,7 +287,7 @@ mod tests {
         let tmp: Vec<Seq32> = vec![0].iter().map(|&x| Seq32::from_u32(x)).collect();
         assert_eq!(state.remote_seqs_to_ack, tmp);
         assert_eq!(state.acked_local_seqs, vec![]);
-        assert_eq!(downloader.recv().unwrap().data(), vec![4; 11]);
+        assert_eq!(downloader.emit().unwrap().data(), vec![4; 11]);
     }
 
     #[test]
@@ -318,7 +318,7 @@ mod tests {
         let mut wtr = OwnedBufWtr::new(1024, 0);
         packet.append_to(&mut wtr).unwrap();
         let slice = BufSlice::from_wtr(wtr);
-        let state = downloader.input_packet(slice).unwrap();
+        let state = downloader.write(slice).unwrap();
         assert_eq!(state.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(state.local_rwnd_size, 3);
         assert_eq!(state.remote_nack.to_u32(), 0);
@@ -326,7 +326,7 @@ mod tests {
         let tmp: Vec<Seq32> = vec![1].iter().map(|&x| Seq32::from_u32(x)).collect();
         assert_eq!(state.remote_seqs_to_ack, tmp);
         assert_eq!(state.acked_local_seqs, vec![]);
-        assert!(downloader.recv().is_none());
+        assert!(downloader.emit().is_none());
     }
 
     #[test]
@@ -355,14 +355,14 @@ mod tests {
         let mut wtr = OwnedBufWtr::new(1024, 0);
         packet.append_to(&mut wtr).unwrap();
         let slice = BufSlice::from_wtr(wtr);
-        let state = downloader.input_packet(slice).unwrap();
+        let state = downloader.write(slice).unwrap();
         assert_eq!(state.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(state.local_rwnd_size, 3);
         assert_eq!(state.remote_nack.to_u32(), 0);
         assert_eq!(state.remote_rwnd_size, 2);
         assert_eq!(state.remote_seqs_to_ack, vec![]);
         assert_eq!(state.acked_local_seqs, vec![]);
-        assert!(downloader.recv().is_none());
+        assert!(downloader.emit().is_none());
     }
 
     #[test]
@@ -405,7 +405,7 @@ mod tests {
         let mut wtr = OwnedBufWtr::new(1024, 0);
         packet.append_to(&mut wtr).unwrap();
         let slice = BufSlice::from_wtr(wtr);
-        let state = download.input_packet(slice).unwrap();
+        let state = download.write(slice).unwrap();
         assert_eq!(state.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(state.local_rwnd_size, 3);
         assert_eq!(state.remote_nack.to_u32(), 0);
@@ -413,7 +413,7 @@ mod tests {
         assert_eq!(state.remote_seqs_to_ack, vec![]);
         let tmp: Vec<Seq32> = vec![1, 3].iter().map(|&x| Seq32::from_u32(x)).collect();
         assert_eq!(state.acked_local_seqs, tmp);
-        assert!(download.recv().is_none());
+        assert!(download.emit().is_none());
     }
 
     #[test]
@@ -455,7 +455,7 @@ mod tests {
             let mut wtr = OwnedBufWtr::new(1024, 0);
             packet.append_to(&mut wtr).unwrap();
             let slice = BufSlice::from_wtr(wtr);
-            let changes = downloader.input_packet(slice).unwrap();
+            let changes = downloader.write(slice).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
             assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -463,7 +463,7 @@ mod tests {
             let tmp: Vec<Seq32> = vec![1].iter().map(|&x| Seq32::from_u32(x)).collect();
             assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
-            assert!(downloader.recv().is_none());
+            assert!(downloader.emit().is_none());
         }
         {
             let packet = PacketBuilder {
@@ -500,7 +500,7 @@ mod tests {
             let mut wtr = OwnedBufWtr::new(1024, 0);
             packet.append_to(&mut wtr).unwrap();
             let slice = BufSlice::from_wtr(wtr);
-            let state = downloader.input_packet(slice).unwrap();
+            let state = downloader.write(slice).unwrap();
             assert_eq!(state.local_next_seq_to_receive.to_u32(), 2);
             assert_eq!(state.local_rwnd_size, 0);
             assert_eq!(state.remote_nack.to_u32(), 0);
@@ -508,8 +508,8 @@ mod tests {
             let tmp: Vec<Seq32> = vec![0].iter().map(|&x| Seq32::from_u32(x)).collect();
             assert_eq!(state.remote_seqs_to_ack, tmp);
             assert_eq!(state.acked_local_seqs, vec![]);
-            assert_eq!(downloader.recv().unwrap().data(), vec![0; 1]);
-            assert_eq!(downloader.recv().unwrap().data(), vec![1; 1]);
+            assert_eq!(downloader.emit().unwrap().data(), vec![0; 1]);
+            assert_eq!(downloader.emit().unwrap().data(), vec![1; 1]);
         }
         {
             let packet = PacketBuilder {
@@ -536,7 +536,7 @@ mod tests {
             let mut wtr = OwnedBufWtr::new(1024, 0);
             packet.append_to(&mut wtr).unwrap();
             let slice = BufSlice::from_wtr(wtr);
-            let changes = downloader.input_packet(slice).unwrap();
+            let changes = downloader.write(slice).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 3);
             assert_eq!(changes.local_rwnd_size, 1);
             assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -544,8 +544,8 @@ mod tests {
             let tmp: Vec<Seq32> = vec![2].iter().map(|&x| Seq32::from_u32(x)).collect();
             assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
-            assert_eq!(downloader.recv().unwrap().data(), vec![2; 2]);
-            assert!(downloader.recv().is_none());
+            assert_eq!(downloader.emit().unwrap().data(), vec![2; 2]);
+            assert!(downloader.emit().is_none());
         }
         // test out of window2
         {
@@ -573,14 +573,14 @@ mod tests {
             let mut wtr = OwnedBufWtr::new(1024, 0);
             packet.append_to(&mut wtr).unwrap();
             let slice = BufSlice::from_wtr(wtr);
-            let changes = downloader.input_packet(slice).unwrap();
+            let changes = downloader.write(slice).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 3);
             assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
             assert_eq!(changes.remote_rwnd_size, 2);
             assert_eq!(changes.remote_seqs_to_ack, vec![Seq32::from_u32(0)]);
             assert_eq!(changes.acked_local_seqs, vec![]);
-            assert!(downloader.recv().is_none());
+            assert!(downloader.emit().is_none());
         }
     }
 
@@ -613,7 +613,7 @@ mod tests {
             let mut wtr = OwnedBufWtr::new(1024, 0);
             packet.append_to(&mut wtr).unwrap();
             let slice = BufSlice::from_wtr(wtr);
-            let changes = download.input_packet(slice).unwrap();
+            let changes = download.write(slice).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 1);
             assert_eq!(changes.local_rwnd_size, 2);
             assert_eq!(changes.remote_nack.to_u32(), 0);
@@ -621,9 +621,9 @@ mod tests {
             let tmp: Vec<Seq32> = vec![0].iter().map(|&x| Seq32::from_u32(x)).collect();
             assert_eq!(changes.remote_seqs_to_ack, tmp);
             assert_eq!(changes.acked_local_seqs, vec![]);
-            assert_eq!(download.recv_max(1).unwrap().data(), vec![0]);
-            assert_eq!(download.recv_max(2).unwrap().data(), vec![1, 2]);
-            assert_eq!(download.recv_max(10).unwrap().data(), vec![3]);
+            assert_eq!(download.emit_max(1).unwrap().data(), vec![0]);
+            assert_eq!(download.emit_max(2).unwrap().data(), vec![1, 2]);
+            assert_eq!(download.emit_max(10).unwrap().data(), vec![3]);
         }
     }
 

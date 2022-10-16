@@ -13,10 +13,10 @@ pub struct SendingPush {
 
 impl SendingPush {
     #[must_use]
-    pub fn new(body: Arc<BufPasta>) -> Self {
+    pub fn new(body: Arc<BufPasta>, now: Instant) -> Self {
         SendingPush {
             body,
-            last_sent: Instant::now(),
+            last_sent: now,
             is_retransmitted: false,
         }
     }
@@ -26,8 +26,8 @@ impl SendingPush {
         &self.body
     }
 
-    pub fn to_retransmit(&mut self) {
-        self.last_sent = Instant::now();
+    pub fn to_retransmit(&mut self, now: Instant) {
+        self.last_sent = now;
         self.is_retransmitted = true;
     }
 
@@ -47,7 +47,7 @@ impl SendingPush {
     }
 
     #[must_use]
-    pub fn since_last_sent(&self) -> time::Duration {
-        Instant::now().duration_since(self.last_sent)
+    pub fn since_last_sent(&self, now: &Instant) -> time::Duration {
+        now.duration_since(self.last_sent)
     }
 }

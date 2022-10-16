@@ -158,7 +158,7 @@ impl Uploader {
         self.on_send_available = observer;
     }
 
-    pub fn to_send(&mut self, slice: buf::BufSlice) -> Result<(), SendError<buf::BufSlice>> {
+    pub fn write(&mut self, slice: buf::BufSlice) -> Result<(), SendError<buf::BufSlice>> {
         let result = match self.to_send_queue.push_back(slice) {
             Ok(_) => Ok(()),
             Err(e) => Err(SendError(e.0)),
@@ -167,9 +167,9 @@ impl Uploader {
     }
 
     #[must_use]
-    pub fn output_packets(&mut self) -> Vec<Packet> {
+    pub fn emit(&mut self, now: &Instant) -> Vec<Packet> {
         let is_then_full = self.to_send_queue.is_full();
-        let packets = self.collect_packets(self.mtu).unwrap();
+        let packets = self.emit_packets(self.mtu, now).unwrap();
 
         // callback when `to_send` is not full
         if let Some(x) = &self.on_send_available {
@@ -187,7 +187,11 @@ impl Uploader {
         packets
     }
 
-    fn collect_packets(&mut self, packet_space: usize) -> Result<Vec<Packet>, OutputError> {
+    fn emit_packets(
+        &mut self,
+        packet_space: usize,
+        now: &Instant,
+    ) -> Result<Vec<Packet>, OutputError> {
         if !(PACKET_HDR_LEN + ACK_HDR_LEN <= packet_space) {
             self.check_rep();
             return Err(OutputError::BufferTooSmall);
@@ -197,7 +201,7 @@ impl Uploader {
             return Err(OutputError::BufferTooSmall);
         }
 
-        let bundles = self.collect_frags(packet_space - PACKET_HDR_LEN);
+        let bundles = self.emit_frags(packet_space - PACKET_HDR_LEN, now);
         let mut packets = Vec::new();
 
         for frags in bundles {
@@ -217,7 +221,7 @@ impl Uploader {
 
     #[inline]
     #[must_use]
-    fn collect_frags(&mut self, space: usize) -> Vec<Vec<Frag>> {
+    fn emit_frags(&mut self, space: usize, now: &Instant) -> Vec<Vec<Frag>> {
         let mut bundler = FragBundler::new(space);
 
         // piggyback ack
@@ -254,7 +258,7 @@ impl Uploader {
                     .build()
                     .unwrap();
                     bundler.pack(frag).unwrap();
-                    push.to_retransmit(); // test case: `test_rto_once`
+                    push.to_retransmit(*now); // test case: `test_rto_once`
                     self.last_sent_heap
                         .set_priority(&seq, cmp::Reverse(push.last_sent()))
                         .unwrap();
@@ -271,7 +275,7 @@ impl Uploader {
             for _ in 0..self.last_sent_heap.len() {
                 if let Some((&seq, last_sent)) = self.last_sent_heap.peek() {
                     let last_sent = last_sent.0;
-                    if Instant::now().duration_since(last_sent) < rto {
+                    if now.duration_since(last_sent) < rto {
                         break;
                     }
                     // write
@@ -287,7 +291,7 @@ impl Uploader {
                             .build()
                             .unwrap();
                             bundler.pack(frag).unwrap();
-                            push.to_retransmit();
+                            push.to_retransmit(*now);
                             self.last_sent_heap
                                 .set_priority(&seq, cmp::Reverse(push.last_sent()))
                                 .unwrap();
@@ -324,7 +328,7 @@ impl Uploader {
             assert!(body.len() <= frag_body_limit);
             assert!(body.len() > 0);
 
-            let push = SendingPush::new(Arc::new(body));
+            let push = SendingPush::new(Arc::new(body), *now);
 
             // write the frag, including its hdr and body, to output buffer
             let seq = self.swnd.end();
@@ -390,12 +394,12 @@ impl Uploader {
     }
 
     #[inline]
-    fn set_acked_local_seq(&mut self, acked_local_seq: Seq32) {
+    fn set_acked_local_seq(&mut self, acked_local_seq: Seq32, now: &Instant) {
         // remove the selected sequence
         if let Some(frag) = self.swnd.remove(&acked_local_seq) {
             if !frag.is_retransmitted() {
                 // set smooth RTT
-                let frag_rtt = frag.since_last_sent();
+                let frag_rtt = frag.since_last_sent(now);
                 match self.stat.srtt {
                     Some(srtt) => {
                         let new_srtt = srtt.mul_f64(1.0 - ALPHA) + frag_rtt.mul_f64(ALPHA);
@@ -422,7 +426,7 @@ impl Uploader {
     }
 
     #[inline]
-    pub fn set_state(&mut self, delta: SetUploadState) -> Result<(), SetStateError> {
+    pub fn set_state(&mut self, delta: SetUploadState, now: &Instant) -> Result<(), SetStateError> {
         for &acked_local_seq in &delta.acked_local_seqs {
             if acked_local_seq == delta.remote_nack {
                 return Err(SetStateError::InvalidState);
@@ -434,7 +438,7 @@ impl Uploader {
         self.set_local_rwnd_size(delta.local_rwnd_size);
         let mut max_acked_local_seq = None;
         for acked_local_seq in delta.acked_local_seqs {
-            self.set_acked_local_seq(acked_local_seq);
+            self.set_acked_local_seq(acked_local_seq, now);
             max_acked_local_seq = Some(match max_acked_local_seq {
                 Some(x) => Seq32::max(x, acked_local_seq),
                 None => acked_local_seq,
@@ -490,31 +494,33 @@ mod tests {
             Seq32,
         },
     };
-    use std::thread;
+    use std::time::Instant;
 
     const MTU: usize = 512;
 
     #[test]
     fn test_empty() {
+        let now = Instant::now();
         let mut uploader = UploaderBuilder::default().build().unwrap();
         let buf = OwnedBufWtr::new(MTU / 2, 0);
         let slice = BufSlice::from_wtr(buf);
-        uploader.to_send(slice).map_err(|_| ()).unwrap();
-        let packets = uploader.output_packets();
+        uploader.write(slice).map_err(|_| ()).unwrap();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 0);
     }
 
     #[test]
     fn test_few_1() {
+        let now = Instant::now();
         let mut uploader = UploaderBuilder::default().build().unwrap();
         uploader.disable_rto = true;
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin = vec![0, 1, 2];
         buf.append(&origin).unwrap();
         let slice = BufSlice::from_wtr(buf);
-        uploader.to_send(slice).map_err(|_| ()).unwrap();
+        uploader.write(slice).map_err(|_| ()).unwrap();
         assert!(!uploader.to_send_queue.is_empty());
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         {
             assert!(uploader.to_send_queue.is_empty());
             let mut body = OwnedBufWtr::new(origin.len(), 0);
@@ -527,12 +533,13 @@ mod tests {
             }
             assert_eq!(body.data(), origin);
         }
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 0);
     }
 
     #[test]
     fn test_few_2() {
+        let now = Instant::now();
         let mut builder = UploaderBuilder::default();
         builder.mtu = MTU;
         let mut uploader = builder.build().unwrap();
@@ -540,13 +547,13 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
         let slice = BufSlice::from_wtr(buf);
-        uploader.to_send(slice).map_err(|_| ()).unwrap();
+        uploader.write(slice).map_err(|_| ()).unwrap();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![3, 4];
         buf.append(&origin2).unwrap();
         let slice = BufSlice::from_wtr(buf);
-        uploader.to_send(slice).map_err(|_| ()).unwrap();
-        let packets = uploader.output_packets();
+        uploader.write(slice).map_err(|_| ()).unwrap();
+        let packets = uploader.emit(&now);
         {
             assert!(uploader.to_send_queue.is_empty());
             let mut body = OwnedBufWtr::new(origin1.len() + origin2.len(), 0);
@@ -561,11 +568,12 @@ mod tests {
             assert_eq!(body.data()[origin1.len()..], origin2);
         }
         assert_eq!(uploader.swnd.end().to_u32(), 1);
-        assert_eq!(uploader.output_packets().len(), 0);
+        assert_eq!(uploader.emit(&now).len(), 0);
     }
 
     #[test]
     fn test_few_many() {
+        let now = Instant::now();
         let mut builder = UploaderBuilder::default();
         builder.mtu = MTU;
         let mut uploader = builder.build().unwrap();
@@ -573,13 +581,13 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
         let slice = BufSlice::from_wtr(buf);
-        uploader.to_send(slice).map_err(|_| ()).unwrap();
+        uploader.write(slice).map_err(|_| ()).unwrap();
         let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin2 = vec![3; MTU];
         buf.append(&origin2).unwrap();
         let slice = BufSlice::from_wtr(buf);
-        uploader.to_send(slice).map_err(|_| ()).unwrap();
-        let packets = uploader.output_packets();
+        uploader.write(slice).map_err(|_| ()).unwrap();
+        let packets = uploader.emit(&now);
         {
             assert_eq!(packets.len(), 1);
             let mut body = OwnedBufWtr::new(MTU, 0);
@@ -597,13 +605,13 @@ mod tests {
             );
         }
         assert_eq!(uploader.swnd.end().to_u32(), 1);
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 0);
         assert_eq!(uploader.swnd.end().to_u32(), 1);
 
         uploader.set_remote_rwnd_size(10);
 
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         {
             assert_eq!(packets.len(), 1);
             let mut body = OwnedBufWtr::new(MTU, 0);
@@ -620,11 +628,12 @@ mod tests {
             );
         }
         assert_eq!(uploader.swnd.end().to_u32(), 2);
-        assert_eq!(uploader.output_packets().len(), 0);
+        assert_eq!(uploader.emit(&now).len(), 0);
     }
 
     #[test]
     fn test_many_few() {
+        let now = Instant::now();
         let mut builder = UploaderBuilder::default();
         builder.mtu = MTU;
         let mut uploader = builder.build().unwrap();
@@ -632,13 +641,13 @@ mod tests {
         let origin1 = vec![3; MTU];
         buf.append(&origin1).unwrap();
         let slice = BufSlice::from_wtr(buf);
-        uploader.to_send(slice).map_err(|_| ()).unwrap();
+        uploader.write(slice).map_err(|_| ()).unwrap();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![0, 1, 2];
         buf.append(&origin2).unwrap();
         let slice = BufSlice::from_wtr(buf);
-        uploader.to_send(slice).map_err(|_| ()).unwrap();
-        let packets = uploader.output_packets();
+        uploader.write(slice).map_err(|_| ()).unwrap();
+        let packets = uploader.emit(&now);
         // packet: _hdr hdr mtu-_hdr-hdr
         // origin:          1[0..mtu-_hdr-hdr]
         {
@@ -653,12 +662,12 @@ mod tests {
             }
             assert_eq!(body.data(), &origin1[..MTU - PACKET_HDR_LEN - PUSH_HDR_LEN]);
         }
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 0);
 
         uploader.set_remote_rwnd_size(10);
 
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         // packet: _hdr hdr _hdr+hdr             3
         // origin:          1[mtu-_hdr-hdr..mtu] 2[0..3]
         {
@@ -677,11 +686,12 @@ mod tests {
             );
             assert_eq!(body.data()[PACKET_HDR_LEN + PUSH_HDR_LEN..], origin2);
         }
-        assert_eq!(uploader.output_packets().len(), 0);
+        assert_eq!(uploader.emit(&now).len(), 0);
     }
 
     #[test]
     fn test_ack1() {
+        let now = Instant::now();
         let mut builder = UploaderBuilder::default();
         builder.mtu = MTU;
         let mut uploader = builder.build().unwrap();
@@ -692,27 +702,28 @@ mod tests {
             let mut buf = OwnedBufWtr::new(MTU / 2, 0);
             buf.append(&origin1).unwrap();
             let slice = BufSlice::from_wtr(buf);
-            uploader.to_send(slice).map_err(|_| ()).unwrap();
+            uploader.write(slice).map_err(|_| ()).unwrap();
         }
         let origin2 = vec![3, 4];
         {
             let mut buf = OwnedBufWtr::new(MTU / 2, 0);
             buf.append(&origin2).unwrap();
             let slice = BufSlice::from_wtr(buf);
-            uploader.to_send(slice).map_err(|_| ()).unwrap();
+            uploader.write(slice).map_err(|_| ()).unwrap();
         }
-        let _ = uploader.output_packets();
+        let _ = uploader.emit(&now);
 
         assert_eq!(uploader.swnd.end().to_u32(), 1);
         assert_eq!(uploader.swnd.size(), 1);
 
-        uploader.set_acked_local_seq(Seq32::from_u32(0));
+        uploader.set_acked_local_seq(Seq32::from_u32(0), &now);
 
         assert_eq!(uploader.swnd.size(), 0);
     }
 
     #[test]
     fn test_rto_once() {
+        let mut now = Instant::now();
         let mut builder = UploaderBuilder::default();
         builder.mtu = MTU;
         let mut uploader = builder.build().unwrap();
@@ -721,24 +732,25 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         {
             let slice = BufSlice::from_bytes(origin1);
-            uploader.to_send(slice).map_err(|_| ()).unwrap();
+            uploader.write(slice).map_err(|_| ()).unwrap();
         }
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 1);
 
-        thread::sleep(uploader.rto());
+        now += uploader.rto();
 
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         // last_seen of the fragment is refreshed
         assert_eq!(packets.len(), 1);
 
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         // the fragment doesn't timeout
         assert_eq!(packets.len(), 0);
     }
 
     #[test]
     fn test_fast_retransmit1() {
+        let now = Instant::now();
         let dup = 1;
         let mut uploader = UploaderBuilder {
             local_recv_buf_len: 0,
@@ -756,17 +768,17 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         {
             let slice = BufSlice::from_bytes(origin1);
-            uploader.to_send(slice).map_err(|_| ()).unwrap();
+            uploader.write(slice).map_err(|_| ()).unwrap();
         }
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 1);
 
         let origin2 = vec![3];
         {
             let slice = BufSlice::from_bytes(origin2);
-            uploader.to_send(slice).map_err(|_| ()).unwrap();
+            uploader.write(slice).map_err(|_| ()).unwrap();
         }
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 1);
 
         // nack is 0 by default. When receiving another same nack, the fast retransmission gets activated since now the dup count becomes 1
@@ -779,15 +791,16 @@ mod tests {
             acked_local_seqs: vec![Seq32::from_u32(1)],
             local_rwnd_size: 1,
         };
-        uploader.set_state(state).unwrap();
+        uploader.set_state(state, &now).unwrap();
 
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
 
         assert_eq!(packets.len(), 1);
     }
 
     #[test]
     fn test_fast_retransmit_no() {
+        let now = Instant::now();
         let dup = 0;
         let mut uploader = UploaderBuilder {
             local_recv_buf_len: 0,
@@ -805,17 +818,17 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         {
             let slice = BufSlice::from_bytes(origin1);
-            uploader.to_send(slice).map_err(|_| ()).unwrap();
+            uploader.write(slice).map_err(|_| ()).unwrap();
         }
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 1);
 
         let origin2 = vec![3];
         {
             let slice = BufSlice::from_bytes(origin2);
-            uploader.to_send(slice).map_err(|_| ()).unwrap();
+            uploader.write(slice).map_err(|_| ()).unwrap();
         }
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 1);
 
         let state = SetUploadState {
@@ -826,7 +839,7 @@ mod tests {
             acked_local_seqs: vec![Seq32::from_u32(0)],
             local_rwnd_size: 1,
         };
-        uploader.set_state(state).unwrap();
+        uploader.set_state(state, &now).unwrap();
 
         // remote wants seq(1)
         // since no out-of-order acks from the remote, we don't retransmit any seq
@@ -834,13 +847,14 @@ mod tests {
         // 0   1
         // ack nack
 
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
 
         assert_eq!(packets.len(), 0);
     }
 
     #[test]
     fn test_fast_retransmit2() {
+        let now = Instant::now();
         let dup = 0;
         let mut uploader = UploaderBuilder {
             local_recv_buf_len: 0,
@@ -858,25 +872,25 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         {
             let slice = BufSlice::from_bytes(origin1);
-            uploader.to_send(slice).map_err(|_| ()).unwrap();
+            uploader.write(slice).map_err(|_| ()).unwrap();
         }
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 1);
 
         let origin2 = vec![3];
         {
             let slice = BufSlice::from_bytes(origin2);
-            uploader.to_send(slice).map_err(|_| ()).unwrap();
+            uploader.write(slice).map_err(|_| ()).unwrap();
         }
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 1);
 
         let origin3 = vec![4];
         {
             let slice = BufSlice::from_bytes(origin3);
-            uploader.to_send(slice).map_err(|_| ()).unwrap();
+            uploader.write(slice).map_err(|_| ()).unwrap();
         }
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 1);
 
         let state = SetUploadState {
@@ -887,7 +901,7 @@ mod tests {
             acked_local_seqs: vec![Seq32::from_u32(2)],
             local_rwnd_size: 1,
         };
-        uploader.set_state(state).unwrap();
+        uploader.set_state(state, &now).unwrap();
 
         // remote acked seq(2) but still wants seq(1)
         // clearly, seq(2) is an out-of-order ack, everything before it should be retransmitted if DUP meets
@@ -899,13 +913,14 @@ mod tests {
 
         // dup count for nack(1): 0
 
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
 
         assert_eq!(packets.len(), 1);
     }
 
     #[test]
     fn test_fast_retransmit3() {
+        let now = Instant::now();
         let dup = 1;
         let mut uploader = UploaderBuilder {
             local_recv_buf_len: 0,
@@ -923,25 +938,25 @@ mod tests {
         let origin1 = vec![0, 1, 2];
         {
             let slice = BufSlice::from_bytes(origin1);
-            uploader.to_send(slice).map_err(|_| ()).unwrap();
+            uploader.write(slice).map_err(|_| ()).unwrap();
         }
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 1);
 
         let origin2 = vec![3];
         {
             let slice = BufSlice::from_bytes(origin2);
-            uploader.to_send(slice).map_err(|_| ()).unwrap();
+            uploader.write(slice).map_err(|_| ()).unwrap();
         }
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 1);
 
         let origin3 = vec![4];
         {
             let slice = BufSlice::from_bytes(origin3);
-            uploader.to_send(slice).map_err(|_| ()).unwrap();
+            uploader.write(slice).map_err(|_| ()).unwrap();
         }
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 1);
 
         let state = SetUploadState {
@@ -952,7 +967,7 @@ mod tests {
             acked_local_seqs: vec![Seq32::from_u32(2)],
             local_rwnd_size: 1,
         };
-        uploader.set_state(state).unwrap();
+        uploader.set_state(state, &now).unwrap();
 
         // remote acked seq(2) but still wants seq(1)
         // clearly, seq(2) is an out-of-order ack, everything before it should be retransmitted if DUP meets
@@ -964,7 +979,7 @@ mod tests {
 
         // dup count for nack(1): 0
 
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
 
         assert_eq!(packets.len(), 0);
 
@@ -976,17 +991,18 @@ mod tests {
             acked_local_seqs: vec![Seq32::from_u32(2)],
             local_rwnd_size: 1,
         };
-        uploader.set_state(state).unwrap();
+        uploader.set_state(state, &now).unwrap();
 
         // dup count for nack(1): 1
 
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
 
         assert_eq!(packets.len(), 1);
     }
 
     #[test]
     fn test_multiple_frags() {
+        let now = Instant::now();
         let mut uploader = UploaderBuilder {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
@@ -1005,7 +1021,7 @@ mod tests {
         // to_send  []
 
         uploader
-            .to_send(BufSlice::from_bytes(vec![9, 8, 7]))
+            .write(BufSlice::from_bytes(vec![9, 8, 7]))
             .map_err(|_| ())
             .unwrap();
 
@@ -1017,14 +1033,17 @@ mod tests {
         assert!(uploader.swnd.is_empty());
 
         uploader
-            .set_state(SetUploadState {
-                remote_rwnd_size: 99,
-                remote_nack: Seq32::from_u32(2),
-                local_next_seq_to_receive: Seq32::from_u32(88),
-                remote_seqs_to_ack: vec![Seq32::from_u32(0), Seq32::from_u32(1)],
-                acked_local_seqs: Vec::new(),
-                local_rwnd_size: 99,
-            })
+            .set_state(
+                SetUploadState {
+                    remote_rwnd_size: 99,
+                    remote_nack: Seq32::from_u32(2),
+                    local_next_seq_to_receive: Seq32::from_u32(88),
+                    remote_seqs_to_ack: vec![Seq32::from_u32(0), Seq32::from_u32(1)],
+                    acked_local_seqs: Vec::new(),
+                    local_rwnd_size: 99,
+                },
+                &now,
+            )
             .unwrap();
 
         //           0  1  2  3
@@ -1033,7 +1052,7 @@ mod tests {
         // to_send  [[9, 8, 7]]
         assert_eq!(uploader.to_ack_queue.len(), 2);
 
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
 
         //           0  1  2  3
         // to_ack
@@ -1121,6 +1140,7 @@ mod tests {
 
     #[test]
     fn test_body_pasta() {
+        let now = Instant::now();
         let mut uploader = UploaderBuilder {
             local_recv_buf_len: 0,
             nack_duplicate_threshold_to_activate_fast_retransmit: 0,
@@ -1134,21 +1154,21 @@ mod tests {
         uploader.disable_rto = true;
 
         uploader
-            .to_send(BufSlice::from_bytes(vec![0, 1]))
+            .write(BufSlice::from_bytes(vec![0, 1]))
             .map_err(|_| ())
             .unwrap();
         uploader
-            .to_send(BufSlice::from_bytes(vec![2]))
+            .write(BufSlice::from_bytes(vec![2]))
             .map_err(|_| ())
             .unwrap();
         uploader
-            .to_send(BufSlice::from_bytes(vec![3, 4, 5]))
+            .write(BufSlice::from_bytes(vec![3, 4, 5]))
             .map_err(|_| ())
             .unwrap();
 
         // to_send  [[0, 1], [2], [3, 4, 5]]
 
-        let packets = uploader.output_packets();
+        let packets = uploader.emit(&now);
         {
             assert_eq!(packets.len(), 1);
             let packet = &packets[0];
