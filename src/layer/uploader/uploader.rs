@@ -497,7 +497,7 @@ mod tests {
         let now = Instant::now();
         let mut uploader = UploaderBuilder::default().build().unwrap();
         let buf = OwnedBufWtr::new(MTU / 2, 0);
-        let slice = BufSlice::from_wtr(buf);
+        let slice = buf.into_slice();
         uploader.write(slice).map_err(|_| ()).unwrap();
         let packets = uploader.emit(&now);
         assert_eq!(packets.len(), 0);
@@ -510,7 +510,7 @@ mod tests {
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin = vec![0, 1, 2];
         buf.append(&origin).unwrap();
-        let slice = BufSlice::from_wtr(buf);
+        let slice = buf.into_slice();
         uploader.write(slice).map_err(|_| ()).unwrap();
         assert!(!uploader.to_send_queue.is_empty());
         let packets = uploader.emit(&now);
@@ -539,12 +539,12 @@ mod tests {
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
-        let slice = BufSlice::from_wtr(buf);
+        let slice = buf.into_slice();
         uploader.write(slice).map_err(|_| ()).unwrap();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![3, 4];
         buf.append(&origin2).unwrap();
-        let slice = BufSlice::from_wtr(buf);
+        let slice = buf.into_slice();
         uploader.write(slice).map_err(|_| ()).unwrap();
         let packets = uploader.emit(&now);
         {
@@ -573,12 +573,12 @@ mod tests {
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin1 = vec![0, 1, 2];
         buf.append(&origin1).unwrap();
-        let slice = BufSlice::from_wtr(buf);
+        let slice = buf.into_slice();
         uploader.write(slice).map_err(|_| ()).unwrap();
         let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin2 = vec![3; MTU];
         buf.append(&origin2).unwrap();
-        let slice = BufSlice::from_wtr(buf);
+        let slice = buf.into_slice();
         uploader.write(slice).map_err(|_| ()).unwrap();
         let packets = uploader.emit(&now);
         {
@@ -633,12 +633,12 @@ mod tests {
         let mut buf = OwnedBufWtr::new(MTU, 0);
         let origin1 = vec![3; MTU];
         buf.append(&origin1).unwrap();
-        let slice = BufSlice::from_wtr(buf);
+        let slice = buf.into_slice();
         uploader.write(slice).map_err(|_| ()).unwrap();
         let mut buf = OwnedBufWtr::new(MTU / 2, 0);
         let origin2 = vec![0, 1, 2];
         buf.append(&origin2).unwrap();
-        let slice = BufSlice::from_wtr(buf);
+        let slice = buf.into_slice();
         uploader.write(slice).map_err(|_| ()).unwrap();
         let packets = uploader.emit(&now);
         // packet: _hdr hdr mtu-_hdr-hdr
@@ -694,14 +694,14 @@ mod tests {
         {
             let mut buf = OwnedBufWtr::new(MTU / 2, 0);
             buf.append(&origin1).unwrap();
-            let slice = BufSlice::from_wtr(buf);
+            let slice = buf.into_slice();
             uploader.write(slice).map_err(|_| ()).unwrap();
         }
         let origin2 = vec![3, 4];
         {
             let mut buf = OwnedBufWtr::new(MTU / 2, 0);
             buf.append(&origin2).unwrap();
-            let slice = BufSlice::from_wtr(buf);
+            let slice = buf.into_slice();
             uploader.write(slice).map_err(|_| ()).unwrap();
         }
         let _ = uploader.emit(&now);

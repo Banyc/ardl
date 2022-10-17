@@ -114,7 +114,7 @@ mod tests {
         .unwrap();
         let mut wtr = OwnedBufWtr::new(1024, 512);
         packet1.append_to(&mut wtr).unwrap();
-        let packet2 = Packet::from_slice(&mut BufSlice::from_wtr(wtr)).unwrap();
+        let packet2 = Packet::from_slice(&mut wtr.into_slice()).unwrap();
         assert_eq!(packet1.hdr.rwnd(), packet2.hdr.rwnd());
         assert_eq!(packet1.hdr.nack(), packet2.hdr.nack());
         assert_eq!(packet1.frags.len(), packet2.frags.len());

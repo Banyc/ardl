@@ -97,7 +97,7 @@ mod tests {
         .unwrap();
         let mut wtr = OwnedBufWtr::new(1024, 512);
         hdr1.append_to(&mut wtr).unwrap();
-        let hdr2 = PacketHeader::from_slice(&mut BufSlice::from_wtr(wtr)).unwrap();
+        let hdr2 = PacketHeader::from_slice(&mut wtr.into_slice()).unwrap();
         assert_eq!(hdr1.rwnd, hdr2.rwnd);
         assert_eq!(hdr1.nack, hdr2.nack);
     }

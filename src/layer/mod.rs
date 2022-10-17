@@ -123,7 +123,7 @@ mod tests {
                 ]
             );
 
-            let inflight = BufSlice::from_wtr(inflight);
+            let inflight = inflight.into_slice();
             let upload2_changes = download2.write(inflight).unwrap();
             upload2.set_state(upload2_changes, &now).unwrap();
 
@@ -142,7 +142,7 @@ mod tests {
             //                               rwnd] [     nack] [      seq] [cmd
             assert_eq!(inflight.data(), vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
-            let inflight = BufSlice::from_wtr(inflight);
+            let inflight = inflight.into_slice();
             let upload1_changes = download1.write(inflight).unwrap();
             upload1.set_state(upload1_changes, &now).unwrap();
         }
@@ -197,7 +197,7 @@ mod tests {
                 ]
             );
 
-            let inflight = BufSlice::from_wtr(inflight);
+            let inflight = inflight.into_slice();
             let upload2_changes = download2.write(inflight).unwrap();
             upload2.set_state(upload2_changes, &now).unwrap();
 

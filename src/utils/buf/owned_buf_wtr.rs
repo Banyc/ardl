@@ -1,4 +1,6 @@
-use super::{buf_wtr::Error, BufWtr};
+use std::sync::Arc;
+
+use super::{buf_wtr::Error, BufSlice, BufSliceBuilder, BufWtr};
 
 #[derive(Debug)]
 pub struct OwnedBufWtr {
@@ -33,6 +35,14 @@ impl OwnedBufWtr {
         self.start = other.start;
         self.end = other.end;
         self.check_rep();
+    }
+    pub fn into_slice(self) -> BufSlice {
+        BufSliceBuilder {
+            buf: Arc::new(self.buf),
+            range: self.start..self.end,
+        }
+        .build()
+        .unwrap()
     }
 }
 

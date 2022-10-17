@@ -207,7 +207,7 @@ mod tests {
         let mut wtr = OwnedBufWtr::new(1024, 512);
         frag1.append_to(&mut wtr).unwrap();
         assert_eq!(frag1.len(), wtr.data_len());
-        let frag2 = Frag::from_slice(&mut BufSlice::from_wtr(wtr)).unwrap();
+        let frag2 = Frag::from_slice(&mut wtr.into_slice()).unwrap();
         assert_eq!(frag1.seq, frag2.seq);
         match frag1.cmd {
             FragCommand::Push { body: body1 } => match frag2.cmd {
@@ -244,7 +244,7 @@ mod tests {
         let mut wtr = OwnedBufWtr::new(1024, 512);
         frag1.append_to(&mut wtr).unwrap();
         assert_eq!(frag1.len(), wtr.data_len());
-        let frag2 = Frag::from_slice(&mut BufSlice::from_wtr(wtr)).unwrap();
+        let frag2 = Frag::from_slice(&mut wtr.into_slice()).unwrap();
         assert_eq!(frag1.seq, frag2.seq);
         match frag1.cmd {
             FragCommand::Push { body: body1 } => match frag2.cmd {
@@ -280,7 +280,7 @@ mod tests {
         let mut wtr = OwnedBufWtr::new(1024, 512);
         frag1.append_to(&mut wtr).unwrap();
         assert_eq!(frag1.len(), wtr.data_len());
-        let frag2 = Frag::from_slice(&mut BufSlice::from_wtr(wtr)).unwrap();
+        let frag2 = Frag::from_slice(&mut wtr.into_slice()).unwrap();
         assert_eq!(frag1.seq, frag2.seq);
         match frag1.cmd {
             FragCommand::Ack => match frag2.cmd {

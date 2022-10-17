@@ -74,13 +74,9 @@ mod tests {
         let mut wtr = OwnedBufWtr::new(1024, 512);
         let mut pasta = BufPasta::new();
         let origin1 = vec![0, 1, 2, 3];
-        let mut wtr1 = OwnedBufWtr::new(1024, 512);
-        wtr1.append(&origin1).unwrap();
         let origin2 = vec![4];
-        let mut wtr2 = OwnedBufWtr::new(1024, 512);
-        wtr2.append(&origin2).unwrap();
-        let slice1 = BufSlice::from_wtr(wtr1);
-        let slice2 = BufSlice::from_wtr(wtr2);
+        let slice1 = BufSlice::from_bytes(origin1);
+        let slice2 = BufSlice::from_bytes(origin2);
 
         assert_eq!(pasta.len(), 0);
         pasta.append(slice1.slice(0..2).unwrap());

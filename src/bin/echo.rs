@@ -211,7 +211,7 @@ fn downloading(
         let msg = messaging.recv().unwrap();
         match msg {
             DownloadingMessaging::ConnRecv(wtr) => {
-                let rdr = BufSlice::from_wtr(wtr);
+                let rdr = wtr.into_slice();
                 let set_upload_state = match downloader.write(rdr) {
                     Ok(x) => x,
                     Err(e) => {

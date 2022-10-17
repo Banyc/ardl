@@ -108,7 +108,7 @@ fn main() {
         let bytes = text.into_bytes();
         let byte_len = bytes.len();
         let wtr = OwnedBufWtr::from_bytes(bytes, 0, byte_len);
-        let slice = BufSlice::from_wtr(wtr);
+        let slice = wtr.into_slice();
 
         block_sending(slice, &uploading_messaging_tx, &on_send_available_rx);
     }
@@ -185,7 +185,7 @@ fn downloading(
         let msg = messaging.recv().unwrap();
         match msg {
             DownloadingMessaging::ConnRecv(wtr) => {
-                let rdr = BufSlice::from_wtr(wtr);
+                let rdr = wtr.into_slice();
                 let set_upload_state = match downloader.write(rdr) {
                     Ok(x) => x,
                     Err(e) => {

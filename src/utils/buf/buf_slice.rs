@@ -1,13 +1,12 @@
-use super::{BufWtr, OwnedBufWtr};
 use std::{ops::Range, sync::Arc};
 
 pub struct BufSlice {
-    buf: Arc<OwnedBufWtr>,
+    buf: Arc<Vec<u8>>,
     range: Range<usize>,
 }
 
 pub struct BufSliceBuilder {
-    pub buf: Arc<OwnedBufWtr>,
+    pub buf: Arc<Vec<u8>>,
     pub range: Range<usize>,
 }
 
@@ -16,7 +15,7 @@ impl BufSliceBuilder {
         if !(self.range.start <= self.range.end) {
             return Err(Error::IndexOutOfRange);
         }
-        if !(self.range.end <= self.buf.data_len()) {
+        if !(self.range.end <= self.buf.len()) {
             return Err(Error::IndexOutOfRange);
         }
 
@@ -33,7 +32,7 @@ impl BufSlice {
     #[inline]
     fn check_rep(&self) {
         assert!(self.range.start <= self.range.end);
-        assert!(self.range.end <= self.buf.data_len());
+        assert!(self.range.end <= self.buf.len());
     }
 
     pub fn clone(slice: &Self) -> Self {
@@ -41,22 +40,12 @@ impl BufSlice {
         clone
     }
 
-    pub fn from_wtr(wtr: OwnedBufWtr) -> Self {
-        let data_len = wtr.data_len();
-        let this = BufSliceBuilder {
-            buf: Arc::new(wtr),
-            range: 0..data_len,
-        }
-        .build()
-        .unwrap();
-        this.check_rep();
-        this
-    }
-
     pub fn from_bytes(buf: Vec<u8>) -> Self {
         let buf_len = buf.len();
-        let wtr = OwnedBufWtr::from_bytes(buf, 0, buf_len);
-        let this = Self::from_wtr(wtr);
+        let this = Self {
+            buf: Arc::new(buf),
+            range: 0..buf_len,
+        };
         this.check_rep();
         this
     }
@@ -64,7 +53,7 @@ impl BufSlice {
     #[must_use]
     #[inline]
     pub fn data(&self) -> &[u8] {
-        &self.buf.data()[self.range.start..self.range.end]
+        &self.buf[self.range.start..self.range.end]
     }
 
     #[must_use]
@@ -131,14 +120,12 @@ mod tests {
 
     use std::sync::Arc;
 
-    use super::{BufSlice, BufSliceBuilder, BufWtr, OwnedBufWtr};
+    use super::{BufSlice, BufSliceBuilder};
 
     #[test]
     fn data() {
-        let mut buf = OwnedBufWtr::new(1024, 512);
-        buf.append(&vec![0, 1, 2]).unwrap();
         let slice = BufSliceBuilder {
-            buf: Arc::new(buf),
+            buf: Arc::new(vec![0, 1, 2]),
             range: 1..3,
         }
         .build()
@@ -148,10 +135,8 @@ mod tests {
 
     #[test]
     fn slice() {
-        let mut buf = OwnedBufWtr::new(1024, 512);
-        buf.append(&vec![0, 1, 2, 3]).unwrap();
         let slice = BufSliceBuilder {
-            buf: Arc::new(buf),
+            buf: Arc::new(vec![0, 1, 2, 3]),
             range: 1..4,
         }
         .build()
@@ -171,10 +156,8 @@ mod tests {
 
     #[test]
     fn split() {
-        let mut buf = OwnedBufWtr::new(1024, 512);
-        buf.append(&vec![9, 0, 1, 2, 3]).unwrap();
         let slice = BufSliceBuilder {
-            buf: Arc::new(buf),
+            buf: Arc::new(vec![9, 0, 1, 2, 3]),
             range: 1..4,
         }
         .build()

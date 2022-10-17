@@ -278,7 +278,7 @@ mod tests {
 
         let mut wtr = OwnedBufWtr::new(1024, 0);
         packet.append_to(&mut wtr).unwrap();
-        let slice = BufSlice::from_wtr(wtr);
+        let slice = wtr.into_slice();
         let state = downloader.write(slice).unwrap();
         assert_eq!(state.local_next_seq_to_receive.to_u32(), 1);
         assert_eq!(state.local_rwnd_size, 2);
@@ -317,7 +317,7 @@ mod tests {
 
         let mut wtr = OwnedBufWtr::new(1024, 0);
         packet.append_to(&mut wtr).unwrap();
-        let slice = BufSlice::from_wtr(wtr);
+        let slice = wtr.into_slice();
         let state = downloader.write(slice).unwrap();
         assert_eq!(state.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(state.local_rwnd_size, 3);
@@ -354,7 +354,7 @@ mod tests {
 
         let mut wtr = OwnedBufWtr::new(1024, 0);
         packet.append_to(&mut wtr).unwrap();
-        let slice = BufSlice::from_wtr(wtr);
+        let slice = wtr.into_slice();
         let state = downloader.write(slice).unwrap();
         assert_eq!(state.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(state.local_rwnd_size, 3);
@@ -404,7 +404,7 @@ mod tests {
 
         let mut wtr = OwnedBufWtr::new(1024, 0);
         packet.append_to(&mut wtr).unwrap();
-        let slice = BufSlice::from_wtr(wtr);
+        let slice = wtr.into_slice();
         let state = download.write(slice).unwrap();
         assert_eq!(state.local_next_seq_to_receive.to_u32(), 0);
         assert_eq!(state.local_rwnd_size, 3);
@@ -454,7 +454,7 @@ mod tests {
 
             let mut wtr = OwnedBufWtr::new(1024, 0);
             packet.append_to(&mut wtr).unwrap();
-            let slice = BufSlice::from_wtr(wtr);
+            let slice = wtr.into_slice();
             let changes = downloader.write(slice).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 0);
             assert_eq!(changes.local_rwnd_size, 2);
@@ -499,7 +499,7 @@ mod tests {
 
             let mut wtr = OwnedBufWtr::new(1024, 0);
             packet.append_to(&mut wtr).unwrap();
-            let slice = BufSlice::from_wtr(wtr);
+            let slice = wtr.into_slice();
             let state = downloader.write(slice).unwrap();
             assert_eq!(state.local_next_seq_to_receive.to_u32(), 2);
             assert_eq!(state.local_rwnd_size, 0);
@@ -535,7 +535,7 @@ mod tests {
 
             let mut wtr = OwnedBufWtr::new(1024, 0);
             packet.append_to(&mut wtr).unwrap();
-            let slice = BufSlice::from_wtr(wtr);
+            let slice = wtr.into_slice();
             let changes = downloader.write(slice).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 3);
             assert_eq!(changes.local_rwnd_size, 1);
@@ -572,7 +572,7 @@ mod tests {
 
             let mut wtr = OwnedBufWtr::new(1024, 0);
             packet.append_to(&mut wtr).unwrap();
-            let slice = BufSlice::from_wtr(wtr);
+            let slice = wtr.into_slice();
             let changes = downloader.write(slice).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 3);
             assert_eq!(changes.local_rwnd_size, 2);
@@ -612,7 +612,7 @@ mod tests {
         {
             let mut wtr = OwnedBufWtr::new(1024, 0);
             packet.append_to(&mut wtr).unwrap();
-            let slice = BufSlice::from_wtr(wtr);
+            let slice = wtr.into_slice();
             let changes = download.write(slice).unwrap();
             assert_eq!(changes.local_next_seq_to_receive.to_u32(), 1);
             assert_eq!(changes.local_rwnd_size, 2);
